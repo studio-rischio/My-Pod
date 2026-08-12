@@ -57,6 +57,23 @@ final class LogStore {
         nextId += 1
         return nextId
     }
+
+    /// Hoisted for the same reason as the log view's timestamp formatter:
+    /// allocating one per line is a real cost across a 5,000-entry export.
+    private static let exportFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    /// Plain-text rendering, shared by the log window's Copy/Save buttons and
+    /// the bug reporter — so a log someone pastes and a log someone reports
+    /// are the same format, and a maintainer only has to read one.
+    static func exportText(_ entries: [LogEntry]) -> String {
+        entries.map { e in
+            "\(exportFormatter.string(from: e.timestamp)) [\(e.level.rawValue.uppercased())] \(e.category): \(e.message)"
+        }.joined(separator: "\n")
+    }
 }
 
 /// Per-category log handle. Created statically as `Log.<category>`. Calls are

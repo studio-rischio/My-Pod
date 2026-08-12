@@ -6,6 +6,7 @@
 //  SPDX-License-Identifier: MIT
 //
 
+import AppKit
 import SwiftUI
 
 @main
@@ -26,6 +27,25 @@ struct My_PodApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("About \(appName)") {
                     openWindow(id: "about")
+                }
+            }
+
+            // The stock Help item opens a help book this app doesn't ship, so
+            // it just errors. Replace it with what someone opening Help
+            // actually wants. Unlike the button in the log window, this reports
+            // the *whole* log — there's no visible filter here to inherit.
+            CommandGroup(replacing: .help) {
+                Button("Report a Bug…") {
+                    BugReporter.openIssue(log: LogStore.exportText(LogStore.shared.entries))
+                }
+                Button("View the Debug Log") {
+                    openWindow(id: "debug-log")
+                }
+                Divider()
+                Button("\(appName) Website") {
+                    if let url = URL(string: "https://rischio.studio/My-Pod/") {
+                        NSWorkspace.shared.open(url)
+                    }
                 }
             }
         }

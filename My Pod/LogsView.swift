@@ -78,6 +78,8 @@ struct LogsView: View {
                     .help("Copy the currently visible (filtered) entries to the clipboard.")
                 Button("Save…") { saveToFile() }
                     .help("Save the currently visible (filtered) entries to a text file.")
+                Button("Report a Bug…") { reportBug() }
+                    .help("Open a pre-filled GitHub issue containing the currently visible (filtered) entries. Your home folder path is replaced with ~, the full log is copied to your clipboard, and nothing is sent until you submit it on GitHub.")
                 Button("Clear", role: .destructive) {
                     let previousCount = store.entries.count
                     store.clear()
@@ -216,11 +218,13 @@ struct LogsView: View {
         }
     }
 
+    /// Scoped to the visible entries, matching Copy and Save — the three
+    /// buttons sit together, so acting on different sets would surprise.
+    private func reportBug() {
+        BugReporter.openIssue(log: exportText())
+    }
+
     private func exportText() -> String {
-        let df = ISO8601DateFormatter()
-        df.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return filtered.map { e in
-            "\(df.string(from: e.timestamp)) [\(e.level.rawValue.uppercased())] \(e.category): \(e.message)"
-        }.joined(separator: "\n")
+        LogStore.exportText(filtered)
     }
 }
