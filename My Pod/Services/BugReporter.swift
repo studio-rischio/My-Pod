@@ -11,11 +11,30 @@ import Foundation
 enum BugReporter {
     static let newIssueURL = "https://github.com/studio-rischio/My-Pod/issues/new"
 
+    /// The issue form at `.github/ISSUE_TEMPLATE/bug_report.yml`. Targeting it
+    /// rather than sending a plain `body=` means a report filed from the app
+    /// and one filed by hand come out with the same fields, and the form's
+    /// required ones — what happened, which iPod — stay enforced.
+    private static let template = "bug_report.yml"
+
+    /// Query keys, which **must** match the form's field `id`s exactly.
+    /// A key with no matching `id` is silently dropped, so a rename in the
+    /// YAML has to be mirrored here or reports quietly arrive empty.
+    private enum Field {
+        static let appVersion = "app-version"
+        static let system = "system"
+        static let logs = "logs"
+    }
+
     /// GitHub answers 414 to an over-long request URI. The ceiling applies to
     /// the *percent-encoded* string, where a newline costs three characters and
     /// log lines are punctuation-heavy — so this sits well under the ~8 KB
-    /// limit rather than trying to ride it.
+    /// limit rather than trying to ride it. Measured against the live endpoint:
+    /// 5,858 characters are accepted, 25,858 are refused.
     private static let maxURLLength = 6_000
+
+    private static let truncationNotice =
+        "… earlier entries trimmed to fit the URL. The full log is on your clipboard — paste it here. …\n"
 
     /// Builds the report, puts the full log on the clipboard, and opens the
     /// browser. The log in the URL is the *tail*, trimmed to fit; the clipboard
@@ -40,60 +59,32 @@ enum BugReporter {
     /// `openIssue` so the result can be inspected without touching the
     /// clipboard or launching a browser.
     static func issueURL(log: String) -> (url: URL?, truncated: Bool) {
-        let (body, truncated) = issueBody(log: log)
-        guard let encoded = percentEncoded(body) else { return (nil, truncated) }
-        return (URL(string: "\(newIssueURL)?labels=bug&body=\(encoded)"), truncated)
+        let fixed = [
+            ("template", template),
+            (Field.appVersion, appVersion),
+            (Field.system, systemDescription),
+        ]
+        .map { "\($0)=\(percentEncoded($1) ?? "")" }
+        .joined(separator: "&")
+
+        // Everything the fixed fields don't spend belongs to the log.
+        let prefix = "\(newIssueURL)?\(fixed)&\(Field.logs)="
+        let budget = maxURLLength - prefix.count - URLLength(truncationNotice)
+        let (tail, truncated) = trimmedTail(log, budget: max(0, budget))
+
+        let logs = (truncated ? truncationNotice : "") + tail
+        guard let encodedLogs = percentEncoded(logs) else { return (nil, truncated) }
+        return (URL(string: prefix + encodedLogs), truncated)
     }
 
-    // MARK: - Body
-
-    private static let truncationNotice =
-        "… earlier entries trimmed to fit the URL. The full log is on your clipboard — paste it here. …\n"
-
-    private static func issueBody(log: String) -> (body: String, truncated: Bool) {
-        let header = """
-        ### What happened
-
-        <!-- What did you expect, and what happened instead? -->
-
-        ### Steps to reproduce
-
-        1.
-        2.
-
-        ### Which iPod
-
-        <!-- Model and capacity, e.g. iPod Photo 30 GB, iPod classic 5th gen -->
-
-        ### Environment
-
-        | | |
-        |---|---|
-        | My Pod | \(appVersion) |
-        | macOS | \(osVersion) |
-        | Architecture | \(architecture) |
-
-        ### Log
-
-        <details>
-        <summary>Debug log</summary>
-
-        ```
-
-        """
-        let footer = "\n```\n\n</details>\n"
-
-        // Reserve the notice unconditionally: working out whether it's needed
-        // requires knowing the budget, which depends on whether it's there.
-        let fixed = URLLength(header) + URLLength(footer) + URLLength(truncationNotice)
-            + newIssueURL.count + "?labels=bug&body=".count
-        let budget = maxURLLength - fixed
-        guard budget > 0 else { return (header + footer, true) }
-
-        // Walk backwards: the newest entries are the ones that explain a crash.
+    /// Keeps as many trailing lines as `budget` allows. Walks backwards because
+    /// the newest entries are the ones that explain a failure; the earliest are
+    /// startup noise.
+    private static func trimmedTail(_ log: String, budget: Int) -> (tail: String, truncated: Bool) {
         var kept: [Substring] = []
         var used = 0
         var truncated = false
+
         for line in log.split(separator: "\n", omittingEmptySubsequences: false).reversed() {
             let cost = URLLength(String(line)) + 3   // + the encoded newline
             if used + cost > budget {
@@ -104,8 +95,7 @@ enum BugReporter {
             kept.append(line)
         }
 
-        let tail = kept.reversed().joined(separator: "\n")
-        return (header + (truncated ? truncationNotice : "") + tail + footer, truncated)
+        return (kept.reversed().joined(separator: "\n"), truncated)
     }
 
     // MARK: - Privacy
@@ -152,8 +142,8 @@ enum BugReporter {
         return "\(short) (\(build))"
     }
 
-    private static var osVersion: String {
-        ProcessInfo.processInfo.operatingSystemVersionString
+    private static var systemDescription: String {
+        "\(ProcessInfo.processInfo.operatingSystemVersionString), \(architecture)"
     }
 
     private static var architecture: String {
