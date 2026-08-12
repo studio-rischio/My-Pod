@@ -1,0 +1,74 @@
+name: Bug report
+description: Something went wrong with device detection, syncing, conversion, or playlists
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things worth checking first, because they account for most reports:
+
+        - **The iPod must be in disk mode** before My Pod can see it at all.
+          See [Connecting the iPod](https://github.com/studio-rischio/My-Pod#connecting-the-ipod).
+        - Tracks already on the device aren't re-examined on later syncs. If a file
+          converts differently after an update, untick and re-tick its album.
+
+        The quickest way to file this is **Window → Debug Log → Report a Bug**, which
+        fills in the version, system and log fields below for you.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+
+  - type: dropdown
+    id: ipod-model
+    attributes:
+      label: Which iPod
+      description: Firmware differs enough between these that the model usually matters.
+      options:
+        - iPod Photo / 4th generation
+        - iPod 5th generation (video)
+        - iPod classic (6th generation)
+        - iPod mini
+        - iPod nano
+        - Other or not sure
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: My Pod version
+      description: Shown in My Pod → About My Pod.
+      placeholder: 1.1 (2)
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: macOS and architecture
+      placeholder: Version 15.7.1 (Build 24G90), arm64
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: >
+        From Window → Debug Log. Home-folder paths are replaced with ~ automatically
+        when filed from the app; check for anything else private before submitting.
+      render: shell
