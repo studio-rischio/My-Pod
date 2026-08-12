@@ -1,0 +1,114 @@
+# Xcode
+#
+# gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+
+## User settings
+xcuserdata/
+
+## Obj-C/Swift specific
+*.hmap
+
+## App packaging
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Swift Package Manager
+#
+# Add this line if you want to avoid checking in source code from Swift Package Manager dependencies.
+# Packages/
+# Package.pins
+# Package.resolved
+# *.xcodeproj
+#
+# Xcode automatically generates this directory with a .xcworkspacedata file and xcuserdata
+# hence it is not needed unless you have added a package configuration file to your project
+# .swiftpm
+
+.build/
+
+# CocoaPods
+#
+# We recommend against adding the Pods directory to your .gitignore. However
+# you should judge for yourself, the pros and cons are mentioned at:
+# https://guides.cocoapods.org/using/using-cocoapods.html#should-i-check-the-pods-directory-into-source-control
+#
+# Pods/
+#
+# Add this line if you want to avoid checking in source code from the Xcode workspace
+# *.xcworkspace
+
+# Carthage
+#
+# Add this line if you want to avoid checking in source code from Carthage dependencies.
+# Carthage/Checkouts
+
+Carthage/Build/
+
+# fastlane
+#
+# It is recommended to not store the screenshots in the git repo.
+# Instead, use fastlane to re-generate the screenshots whenever they are needed.
+# For more information about the recommended setup visit:
+# https://docs.fastlane.tools/best-practices/source-control/#source-control
+
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Anchored to the repo root on purpose. Unanchored, these match at any depth —
+# `examples/` was silently excluding Vendor/libgpod/bindings/python/examples/,
+# whose Makefile.am is named in libgpod's configure.ac, so a fresh clone failed
+# to configure.
+/examples/
+/agent_space/
+/build/
+.DS_Store
+*~lock~*
+
+# Superseded by Vendor/libgpod. ipod-tools is its own repo
+# (github.com/jbartolozzi/ipod-tools) and nothing here references it any more;
+# ignored so a stray `git add -A` can't commit it as an embedded repo.
+/ipod-tools/
+
+# Vendored libgpod — the source is committed, the autotools build output is not.
+# Regenerate with ./Scripts/build-libgpod.sh (clean with `… clean`).
+Vendor/libgpod/**/.libs/
+Vendor/libgpod/**/.deps/
+Vendor/libgpod/**/*.o
+Vendor/libgpod/**/*.lo
+Vendor/libgpod/**/*.la
+Vendor/libgpod/**/*.a
+Vendor/libgpod/**/Makefile
+Vendor/libgpod/**/Makefile.in
+Vendor/libgpod/**/stamp-h1
+Vendor/libgpod/aclocal.m4
+Vendor/libgpod/autom4te.cache/
+Vendor/libgpod/config.guess
+Vendor/libgpod/config.h
+Vendor/libgpod/config.h.in
+Vendor/libgpod/config.log
+Vendor/libgpod/config.status
+Vendor/libgpod/config.sub
+Vendor/libgpod/configure
+Vendor/libgpod/depcomp
+Vendor/libgpod/install-sh
+Vendor/libgpod/libtool
+Vendor/libgpod/ltmain.sh
+Vendor/libgpod/missing
+Vendor/libgpod/compile
+Vendor/libgpod/test-driver
+Vendor/libgpod/libgpod-1.0.pc
+Vendor/libgpod/po/*.gmo
+Vendor/libgpod/po/*.mo
+Vendor/libgpod/po/POTFILES
+Vendor/libgpod/po/stamp-it
+
+# Full-resolution screenshot originals. The repo ships the resized .webp
+# versions; these are kept locally so a re-encode doesn't mean re-shooting.
+/docs/screenshots/_originals/

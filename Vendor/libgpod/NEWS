@@ -1,0 +1,339 @@
+Overview of changes in libgpod 0.8.3
+====================================
+
+* Add support for libimobiledevice 1.1.5 (there was an API/ABI break)
+* Remove use of some deprecated glib functions
+* Fix various issues found using clang/cppcheck
+* Improve robustness of the iphone callout
+
+Overview of changes in libgpod 0.8.2
+====================================
+
+iPhone 4/iPod Touch 4/iPad/Nano 6g are still unsupported in this release.
+However, libgpod now has a mechanism to dynamically load
+a module named $libdir/libgpod/libhashab.so. This will be useful to
+easily enable support for these devices if someone comes up with a
+way to compute the music database checksum.
+The udev helper is now built by default, and the HAL callout is no longer
+built by default, use --enable-udev/--with-hal if you need ot change that.
+
+* fix mono binding on 32 bit systems (Christian Krause)
+* better iOS 4.3 support (Martin Szulecki, Nikias Bassen)
+* dynamic loader for libhashab.so (Nikias Bassen)
+* make smartplaylists case-insensitive to match what iTunes does
+* (Christophe Fergeau)
+* more robust Shuffle support in udev helper (Christophe Fergeau)
+* various compilation fixes and build system improvements (Alexander
+  Weinert, Bastien Nocera, Christophe Fergeau)
+* bug fixes (phantomjinx, James Burton, Christophe Fergeau)
+* updated French translation (Éric Lassauge)
+
+Overview of changes in libgpod 0.8.0
+====================================
+
+For information about iPhone/iPod Touch/iPod Nano 5g support, please read
+carefully the overview of libgpod 0.7.90 below. The iPhone 4, iPod Touch 4
+and the iPad aren't supported, other iOS4 devices should work. The Nano 6g
+(Touch Nano) isn't supported either.
+
+This release is a quick release after 0.7.95, it brings some last minute
+bug fixes, and libgpod finally gets a stable 0.8.0 release.
+
+* shuffle 3g/4g bug fixes (Adam Broschinski)
+* bug fixes related to the addition of the new ipod models (Christophe
+  Fergeau)
+* silence some useless runtime warnings (Christophe Fergeau)
+
+Overview of changes in libgpod 0.7.95
+=====================================
+
+For information about iPhone/iPod Touch/iPod Nano 5g support, please read
+carefully the overview of libgpod 0.7.90 below. The iPhone 4, iPod Touch 4
+and the iPad aren't supported, other iOS4 devices might work. The Nano 6g
+(Touch Nano) isn't supported either.
+
+This release brings some improvements to the generation of the sqlite
+databases (used by iOS devices), in particular improved playcounts handling.
+It also adds some bug fixes to the mono bindings.
+
+* improved support for sqlite databases (Joel Smith)
+* bug fixes and playlist support for mono bindings (Alan McGovern, Gabriel
+  Burt, Nathaniel McCallum)
+* small itdb_start_sync/itdb_stop_sync behaviour change, now the calls need
+  to be paired, but itdb_start_sync can be called N times, and the "Sync in
+  Progress" screen will only go away after the Nth call to itdb_stop_sync
+  (Hector Martin)
+* be more smart when auto-guessing whether to use iPod_Control or
+  iTunes_Control (Whitney Young)
+* improve error handling in itdb_init and itdb_write, before that there
+  were error cases that were not properly reported to the caller (Christophe
+  Fergeau)
+
+
+Overview of changes in libgpod 0.7.94
+=====================================
+
+For information about iPhone/iPod Touch/iPod Nano 5g support, please read
+carefully the overview of libgpod 0.7.90 below. The iPhone 4 and the iPad
+aren't supported, other iOS4 devices might work.
+This release adds support for the button-less iPod Shuffles (without voice
+over) and CLI (mono/C# bindings), as well as various bug fixes.
+
+* Shuffle 3g and 4g support (Adam Broschinski)
+* CLI bindings (Nathaniel McCallum, Alan McGovern, Bertrand Lorentz)
+* artwork fixes (Nikias Bassen)
+* various bug fixes (Todd Zullinger, Olivier Crête, Cédric Bellegarde, Alex
+  Mauer, Christophe Fergeau)
+
+Overview of changes in libgpod 0.7.93
+=====================================
+
+For information about iPhone/iPod Touch/iPod Nano 5g support, please read
+carefully the overview of libgpod 0.7.90 below.
+This release mainly contain bugfixes that should polish iPhone use.
+
+* various bug fixes in HAL/udev iPhone callout which would make it fail
+  to dump SysInfoExtended more often than not.
+* fix iPod Classic 80GB support (Joeny Ang).
+* handle TV Shows, Movies and Music Videos on iPhone better (Joel Smith)
+* fix python bindings for the iPhone (Adrian Sampson).
+* fix OnTheGo playlist parsing (the 1st on-the-go playlist was always
+  ignored).
+* automatically call itdb_shuffle_write when itdb_write is called if needed.
+* some gint32/guint32 changes were made in the public API, this shouldn't
+  break anything, but please report a bug if it's an annoyance for you.
+* lower udev rule priority so that it runs after the usbmux udev rule.
+
+Overview of changes in libgpod 0.7.92
+=====================================
+
+For information about iPhone/iPod Touch/iPod Nano 5g support, please read
+carefully the overview of libgpod 0.7.90 below.
+
+* make the temporary mountpoint used by the HAL/udev callouts configurable
+  at compile time (Bastien Nocera). This is helpful for distros who use 
+  SELinux to restrict what the callouts can do.
+* tag .mov files as video files (Erik Staats)
+* add itdb_start_sync and itdb_stop_sync functions to show/hide the "Sync
+  in progress" screen on iPhones and iPod Touch (this is a no-op on other
+  devices)
+* set udisks-compliant names for icons in the udev callout instead of using
+  the old devicekit-disks names
+* prefix libgpod udev rule with a number (80-) since it's the usual way
+  of naming rules
+
+Overview of changes in libgpod 0.7.91
+=====================================
+
+For information about iPhone/iPod Touch/iPod Nano 5g support, please read
+carefully the overview of libgpod 0.7.90 below.
+
+* add udev callout 
+
+HAL is actively being deprecated, this udev callout is meant to be functionally
+equivalent to the HAL callout except that it doesn't export the podsleuth-like
+information to the udev database. This would be easy to do, but udev
+maintainers didn't recommend doing that. Installing both the udev and HAL
+callout at the same time is disrecommended since they'd both be run upon
+device insertion. As for the HAL callout, the udev callout needs to be compiled
+against libusb for plug-n-play nano5g support.
+
+* fix playback order when sorting by composer (bug reported and fixed by
+Alex T.)
+
+* fix handling of nano5g with the latest firmware
+
+* various bug fixes
+
+Overview of changes in libgpod 0.7.90
+=====================================
+
+This release is API and ABI compatible with libgpod 0.7.2. It's a development
+release toward libgpod 0.8.0. Please report any bug or misbehaviour you may 
+find with this release, especially with the iPhoneOS/iPod Nano 5g support. 
+
+* iPhoneOS 3.x support (iPhone and iPod Touch) 
+
+This requires a working libimobiledevice stack and a device initialized
+once by iTunes. This support is optional so make sure you have libimobiledevice
+development headers installed when compiling libgpod if you want to get it.
+libgpod HAL callout needs to be installed and working for this support to work,
+see README.overview for more details.
+
+* iPod Nano 5G support 
+
+The device database needs to be initialized by iTunes once.
+libgpod HAL callout needs to be installed and working for this support to work,
+see README.overview for more details. Please note that for proper nano5g
+support, the HAL callout must be compiled with libusb support (which is 
+optional). This requires libusb >= 1.0 to be installed.
+
+* iPod Classic 3G support
+
+* fix iPod Nano 4G 4GB serial number (bgo #599772)
+
+* properly read timezone information from iPod Classic and Nano 4G
+
+* artwork writing bug fixes
+
+* iTunesDB reading bug fixes
+
+* add code sample showing how to copy a file to the iPod
+
+* export podsleuth-like information to HAL
+
+
+Overview of changes in libgpod 0.7.2
+====================================
+
+* Performance work (thanks a lot to Javier Kohen for his patches)
+
+* Add itdb_device_supports_podcast and itdb_device_supports_chapter_image
+  methods
+
+* Fix static iPod Classic/Nano 3G artwork formats
+
+* Change installation directory for the HAL callout in the hope that it
+  will work out of the box on more systems
+
+* BSD portability fixes (courtesy of Andrew Nosenko)
+
+* Write MHLA (list of albums) headers to iTunesDB
+
+* Small improvements for iPhone support though iPhone 3G are still
+  unsupported because we can't checksum the iPhone iTunesDB.
+
+
+Overview of changes in libgpod 0.7.0
+====================================
+
+* support for iPod Nano 4th generation
+
+This includes support for cover art.
+Please note that this release DOES NOT support iPhones and iPod Touch
+with firmware 2.x
+
+* support for "sparse artwork" writing
+
+This lets us write more compact artwork files to the iPod, which in turn makes
+the UI more responsive (and saves disk space on the iPod).
+
+* jump table support
+
+These are the big letters that show up in the album/artist list when someone
+quickly scrolls through them. Thanks a lot to Ian Stewart for implementing it.
+
+* chapter data support
+
+Chapter data allows large files (movies, audio books, podcasts) to be divided
+into smaller sections.  Thanks to Michael Tiffany for this feature.
+
+* improved timezone handling
+
+This should now work up to 5G iPods, for newer iPods, libgpod will assume 
+timestamps are in UTC.
+
+* translation updates
+
+Thanks to all of our translators :)
+
+* much more complete API doc
+
+All of the public API is now documented with gtk-doc.
+
+* simplification of the cover art handling API
+
+The API for artwork for developers using libgpod should be more
+straightforward, if things are missing, don't hesitate to get in touch
+with us ;)
+
+* extensive plist parser
+
+In libgpod 0.6.0, libgpod got a very basic parser for the SysInfoExtended file
+(which is a XML plist description). This parser was rewritten for this release
+to parse the whole file. This parser depends on libxml2 but its compilation
+will be disabled if libxml2 and its development headers can't be found.
+
+* add mapping from iPod serial numbers to iPod models
+
+The iPod serial number can be obtained programmatically, and its last 3 digits
+are characteristic of an iPod (type, generation, color, capacity). libgpod
+can now find out an iPod model using this serial number.
+
+* portability improvements to windows and macosx
+
+This is probably not perfect yet, but the goal is to improve it as much as
+possible so don't hesitate to send bug reports if some things are still not
+working. Thanks to the songbird project and Éric Lassauge.
+
+* reworked handling of artwork formats
+
+libgpod can now automatically use the artwork formats described in
+SysInfoExtended even if the iPod model is unknown, this should make it possible
+for libgpod to support artwork on newly released iPod models without the need
+to upgrade.
+
+* python bindings are more consistent with other python container objects
+
+This enables testing whether a key exists in an object (e.g. "'title' in track")
+as well as iterating over a Track or Photo object's keys, values, or items.
+
+* bug fixes and code cleanup all over the place
+
+
+Overview of changes in libgpod 0.6.0
+====================================
+
+* support for iPod Classics and Video Nanos
+
+The database from these models is protected by a checksum. When this checksum 
+doesn't match the content of the iPod database, the iPod won't show any 
+track (ie it will look empty). Support for writing this checksum has been 
+implemented in this release thanks to the awesome work of a few people in
+#gtkpod. However, to calculate this checksum, a so called "firewire ID" is 
+needed which is different from iPod to iPod. Since reading it from the iPod
+requires special permissions, the firewire ID must be written in a regular 
+file on the iPod so that libgpod can find it and use it to generate the
+checksum. 
+
+libgpod installs a HAL callout to do that automatically when 
+everything is installed in an appropriate place. It can also be done manually,
+see README.SysInfo for more information.
+
+Cover art should be working except for non square covers, preliminary photo 
+support but this hasn't been widely tested yet.
+
+
+* support for iPhone and iPod Touch
+
+This requires manual user intervention: the devices must be jailbroken and 
+mounted through sshfs. The iPod Touch also needs a firewire ID which must be
+manually set, see README.SysInfo
+
+Cover art is implemented but not tested at all, ditto for photo support on 
+the iPod Touch
+
+
+* additional tools to get the firewire id from new iPods including a HAL
+  callout which will make the process totally automatic when it's properly 
+  installed. These tools need libsgutils to be installed.
+
+* endianness fixes in the artwork writing code
+* now depends on glib 2.8 or newer
+
+Huge thanks to wtbw and Simon Schulz without whom that release wouldn't have 
+been possible. Thanks as well to the people on #gtkpod for the testing they 
+provided.
+
+Other contributors to the release:
+- Jesse Bouwman
+- Alex Eftimie
+- Christophe Fergeau
+- Filippo Giunchedi
+- Javier Kohen
+- Tobias Kreisel
+- Eric Lassauge
+- Nicholas Piper
+- Jorg Schuler
+- Simon Schulz
+- Todd Zullinger

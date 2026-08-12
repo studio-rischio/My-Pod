@@ -1,0 +1,173 @@
+<!-- ##### SECTION Title ##### -->
+Artwork
+
+<!-- ##### SECTION Short_Description ##### -->
+Data structure to store iPod artwork (album covers)
+
+<!-- ##### SECTION Long_Description ##### -->
+<para>
+These functions and structures are for adding, changing, and removing
+album/track artwork.  For working with photos, see the
+<link linkend="photodb">Photo database</link> section.
+</para>
+
+<!-- ##### SECTION See_Also ##### -->
+<para>
+<link linkend="photodb">Photo database</link>
+</para>
+
+<!-- ##### SECTION Stability_Level ##### -->
+
+
+<!-- ##### STRUCT Itdb_Artwork ##### -->
+<para>
+
+</para>
+
+@thumbnail: 
+@id: 
+@dbid: 
+@unk028: 
+@rating: 
+@unk036: 
+@creation_date: 
+@digitized_date: 
+@artwork_size: 
+@reserved_int1: 
+@reserved_int2: 
+@reserved1: 
+@reserved2: 
+@usertype: 
+@userdata: 
+@userdata_duplicate: 
+@userdata_destroy: 
+
+<!-- ##### FUNCTION itdb_artwork_new ##### -->
+<para>
+
+</para>
+
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_artwork_duplicate ##### -->
+<para>
+
+</para>
+
+@artwork: 
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_artwork_free ##### -->
+<para>
+
+</para>
+
+@artwork: 
+
+
+<!-- ##### FUNCTION itdb_artwork_get_pixbuf ##### -->
+<para>
+
+</para>
+
+@device: 
+@artwork: 
+@width: 
+@height: 
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_artwork_set_thumbnail ##### -->
+<para>
+
+</para>
+
+@artwork: 
+@filename: 
+@rotation: 
+@error: 
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_artwork_set_thumbnail_from_data ##### -->
+<para>
+
+</para>
+
+@artwork: 
+@image_data: 
+@image_data_len: 
+@rotation: 
+@error: 
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_artwork_set_thumbnail_from_pixbuf ##### -->
+<para>
+
+</para>
+
+@artwork: 
+@pixbuf: 
+@rotation: 
+@error: 
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_artwork_remove_thumbnails ##### -->
+<para>
+
+</para>
+
+@artwork: 
+
+
+<!-- ##### STRUCT Itdb_Thumb ##### -->
+<para>
+
+</para>
+
+@data_type: 
+@rotation: 
+
+<!-- ##### FUNCTION itdb_thumb_duplicate ##### -->
+<para>
+
+</para>
+
+@thumb: 
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_thumb_free ##### -->
+<para>
+
+</para>
+
+@thumb: 
+
+
+<!-- ##### FUNCTION itdb_thumb_to_pixbuf_at_size ##### -->
+<para>
+
+</para>
+
+@device: 
+@thumb: 
+@width: 
+@height: 
+@Returns: 
+
+
+<!-- ##### FUNCTION itdb_thumb_to_pixbufs ##### -->
+<para>
+
+</para>
+
+@device: 
+@thumb: 
+@Returns: 
+
+

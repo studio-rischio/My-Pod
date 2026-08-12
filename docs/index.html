@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Pod — sync music to a classic iPod, on modern macOS</title>
+<meta name="description" content="A native macOS app for syncing music to click-wheel iPods. Mirrors a folder-structured library, transcodes what the iPod can't play, and writes cover art and playlists.">
+<!-- Spaces percent-encoded so the path is a valid URL when served. -->
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+
+<!-- Social preview. og:image and og:url must be absolute — a relative path
+     won't resolve when another site scrapes this page. These point at the
+     GitHub Pages address for this repo; update both if the page moves. -->
+<meta property="og:title" content="My Pod">
+<meta property="og:description" content="Sync music to a classic iPod, on modern macOS.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://studio-rischio.github.io/My-Pod/">
+<meta property="og:image" content="https://studio-rischio.github.io/My-Pod/app-icon.png">
+
+<style>
+  /* ---- Tokens -------------------------------------------------------
+     Every colour is pulled from the app icon: the stars are #FEBD10, the
+     notes #1DA0CC, and the tile's navy gradient runs #265475 → #19476D.
+     The neutrals are that navy desaturated and darkened, so the greys carry
+     a blue bias rather than reading as generic slate.                     */
+  :root {
+    color-scheme: dark;
+
+    --ground:  #0A131B;
+    --surface: #101E2A;
+    --raised:  #162836;
+    --line:    #1D2E3D;
+    --fg:      #E4EDF4;
+    --muted:   #849BAF;
+    --gold:    #FEBD10;
+    --cyan:    #1DA0CC;
+    --shadow:  0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+            system-ui, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --page: 64rem;
+    --prose: 62ch;
+  }
+
+  /* Dark only, deliberately. The app runs dark, all eight screenshots are dark,
+     and the icon's ground is navy — so the page commits to that world rather
+     than making the screenshots float on paper. The hero icon carries its own
+     tile and would survive a light ground, so this is a design choice, not a
+     constraint: restoring a light theme means re-adding one media query that
+     redefines the tokens below. */
+
+  /* ---- Base ---------------------------------------------------------- */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--page);
+    margin-inline: auto;
+    /* padding-inline, never the `padding` shorthand: sections carry .wrap too,
+       and a shorthand here would zero their padding-block — the class beats the
+       `section` element selector on specificity. */
+    padding-inline: clamp(1.25rem, 5vw, 3rem);
+  }
+
+  a { color: var(--cyan); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:hover { color: var(--fg); }
+
+  :focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+
+  /* ---- Section rhythm -------------------------------------------------
+     One rule owns vertical spacing between sections so nothing fights it. */
+  section { padding-block: clamp(3.5rem, 9vw, 6rem); }
+  section + section { border-top: 1px solid var(--line); }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .75rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 .9rem;
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    background: var(--gold);
+    /* Diamond, echoing the four-point stars in the icon. */
+    rotate: 45deg;
+    flex: none;
+  }
+
+  .section-title {
+    font-size: clamp(1.5rem, 3.2vw, 2rem);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    line-height: 1.2;
+  }
+
+  .lede {
+    max-width: var(--prose);
+    color: var(--muted);
+    margin: .9rem 0 0;
+  }
+
+  /* ---- Hero ----------------------------------------------------------- */
+  /* Centred stack: icon, wordmark, then the supporting lines. `overflow:
+     hidden` is what crops the bloom below into a band rather than letting it
+     bleed past the header and widen the page. */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: clamp(3.5rem, 10vw, 7rem) clamp(2.5rem, 6vw, 4rem);
+  }
+
+  /* Cyan bloom behind the icon. Deliberately the notes' own --cyan rather than
+     a neutral white glow, so it reads as light coming off the tile. Anchored
+     above the top edge so only the lower half of the gradient shows. */
+  .hero::before {
+    content: "";
+    position: absolute;
+    top: clamp(-15rem, -22vw, -9rem);
+    left: 50%;
+    transform: translateX(-50%);
+    /* Never wider than the clip box: the bloom is cropped at the top on
+       purpose, but a horizontal crop would leave a hard edge on narrow
+       screens, where the gradient is still partly opaque at the boundary. */
+    width: min(900px, 100%);
+    height: 620px;
+    background: radial-gradient(closest-side, rgba(29, 160, 204, .30), transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Lift the content clear of the bloom's stacking context. */
+  .hero > * { position: relative; z-index: 1; }
+
+  .hero-head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(1rem, 2.4vw, 1.6rem);
+  }
+
+  .app-icon {
+    /* ÷0.80469 because the rendered icon is only 80.5% tile: macOS surrounds it
+       with transparent margin and a drop shadow, so an uncorrected height would
+       draw a visibly smaller tile than the number asks for. The clamp is the
+       tile size you actually want to see. */
+    height: calc(clamp(6.5rem, 13vw, 8.5rem) / 0.80469);
+    width: auto;
+    flex: none;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.75rem, 8vw, 4.5rem);
+    font-weight: 700;
+    letter-spacing: -.035em;
+    line-height: 1;
+    text-align: center;
+  }
+
+  /* The centring stops at the hero's own copy — the screenshot pair below it
+     keeps its own alignment. */
+  .hero-sub {
+    font-size: clamp(1.05rem, 2.2vw, 1.3rem);
+    color: var(--muted);
+    max-width: var(--prose);
+    margin: 1.5rem auto 0;
+    text-align: center;
+  }
+
+  .meta {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--muted);
+    margin: 1.75rem 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: .5rem 1.25rem;
+  }
+  .meta span { white-space: nowrap; }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: .75rem;
+    margin-top: 2rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .7rem 1.15rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: .95rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--fg);
+    background: var(--surface);
+    transition: border-color .15s ease, background-color .15s ease;
+  }
+  .btn:hover { border-color: var(--muted); color: var(--fg); }
+
+  .btn-primary {
+    background: var(--gold);
+    border-color: var(--gold);
+    color: #16120A;   /* fixed dark ink — the gold ground never changes */
+  }
+  .btn-primary:hover { background: #FFD255; border-color: #FFD255; color: #16120A; }
+
+  .actions-note {
+    margin: .9rem 0 0;
+    font-size: .85rem;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  /* ---- Figures -------------------------------------------------------- */
+  figure { margin: 0; }
+
+  .shot {
+    width: 100%;
+    height: auto;
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    background: var(--surface);
+  }
+
+  figcaption {
+    font-size: .88rem;
+    color: var(--muted);
+    margin-top: .85rem;
+    max-width: var(--prose);
+  }
+
+  .figure-lead { margin-top: clamp(2rem, 5vw, 3rem); }
+
+  /* ---- Hero pair ------------------------------------------------------
+     Library on the Mac beside the result on the device — a before and after.
+     The two images have very different aspects (screenshot 1.318, photo 0.793),
+     so each one's flex-grow is set to its own aspect ratio. Widths then land in
+     that same proportion, and because height = width ÷ aspect, both render to
+     an identical height without a single pixel value being hard-coded. */
+  .pair {
+    display: flex;
+    align-items: flex-start;
+    gap: clamp(.75rem, 1.8vw, 1.25rem);
+    margin-top: clamp(2rem, 5vw, 3rem);
+  }
+  .pair figure { min-width: 0; }
+  .pair-wide { flex: 1318 1 0; }   /* 2264 ÷ 1718 */
+  .pair-tall { flex:  793 1 0; }   /* 1946 ÷ 2455 */
+
+  .pair img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    background: var(--surface);
+  }
+
+  .pair figcaption {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: .85rem;
+  }
+
+  /* Stacked below the breakpoint, with the photo reined in — at full width its
+     portrait aspect would run taller than the screen it sits under. */
+  @media (max-width: 46rem) {
+    .pair { flex-direction: column; align-items: stretch; }
+    .pair-tall { max-width: 17rem; }
+  }
+
+  /* ---- Features ------------------------------------------------------- */
+  .features {
+    list-style: none;
+    padding: 0;
+    margin: clamp(2rem, 5vw, 3rem) 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: clamp(1.5rem, 4vw, 2.5rem);
+  }
+  .features h3 {
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: -.01em;
+    margin-bottom: .35rem;
+  }
+  .features p {
+    margin: 0;
+    color: var(--muted);
+    font-size: .95rem;
+    line-height: 1.6;
+  }
+
+  /* ---- Sync sequence --------------------------------------------------
+     Numbered because this genuinely is one: each phase runs in order, and
+     the number is the information. Features above are deliberately not. */
+  .steps {
+    list-style: none;
+    padding: 0;
+    margin: clamp(2rem, 5vw, 3rem) 0 0;
+    display: grid;
+    gap: clamp(2.5rem, 6vw, 4rem);
+  }
+
+  .step-head {
+    display: flex;
+    align-items: baseline;
+    gap: .85rem;
+    margin-bottom: 1rem;
+  }
+  .step-num {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+    flex: none;
+  }
+  .step-head h3 {
+    font-size: 1.1rem;
+    font-weight: 650;
+    letter-spacing: -.01em;
+  }
+  .step-head p {
+    margin: .2rem 0 0;
+    color: var(--muted);
+    font-size: .95rem;
+  }
+
+  @media (min-width: 52rem) {
+    .steps { grid-template-columns: 1fr 1fr; }
+  }
+
+  /* ---- Code ----------------------------------------------------------- */
+  .code {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: .875rem;
+    line-height: 1.75;
+    margin: 1.25rem 0 0;
+  }
+  .code code { white-space: pre; display: block; }
+  .code .c { color: var(--muted); }
+
+  .req {
+    list-style: none;
+    padding: 0;
+    margin: clamp(1.75rem, 4vw, 2.5rem) 0 0;
+    display: grid;
+    gap: .6rem;
+    max-width: var(--prose);
+  }
+  .req li {
+    display: flex;
+    gap: .75rem;
+    align-items: baseline;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: .6rem;
+  }
+  .req dfn {
+    font-style: normal;
+    font-family: var(--mono);
+    font-size: .78rem;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    flex: none;
+    width: 7.5rem;
+  }
+
+  .eyebrow-tight { margin-top: 0; }
+
+  /* Small print under a column: the quarantine escape hatch and the link to
+     older releases, which shouldn't compete with the command above them. */
+  .fine {
+    max-width: var(--prose);
+    margin: 1.1rem 0 0;
+    font-size: .88rem;
+    color: var(--muted);
+  }
+
+  .cols {
+    display: grid;
+    gap: clamp(2rem, 5vw, 3.5rem);
+    margin-top: clamp(2rem, 5vw, 3rem);
+  }
+  @media (min-width: 52rem) {
+    .cols { grid-template-columns: 1fr 1fr; align-items: start; }
+  }
+
+  /* ---- Footer --------------------------------------------------------- */
+  footer {
+    border-top: 1px solid var(--line);
+    padding-block: 3rem 4rem;
+    color: var(--muted);
+    font-size: .875rem;
+  }
+  footer p { margin: 0 0 .85rem; max-width: var(--prose); }
+  footer p:last-child { margin-bottom: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero wrap">
+  <div class="hero-head">
+    <img class="app-icon" src="app-icon.png" width="256" height="256"
+         alt="The My Pod app icon: a white click-wheel iPod on a navy tile, with gold stars and blue music notes above it.">
+    <h1>My&nbsp;Pod</h1>
+  </div>
+
+  <p class="hero-sub">
+    Sync music to a classic iPod, on modern macOS. Point it at a folder of
+    music, tick what you want, and it handles the rest — including converting
+    FLAC and anything else the iPod can&rsquo;t play, so you never have to keep a
+    second, iPod-friendly copy of your library.
+  </p>
+
+  <p class="meta">
+    <span>macOS 15.7+</span>
+    <span>Apple silicon</span>
+    <span>MIT licensed</span>
+    <span>Built on libgpod</span>
+  </p>
+
+  <!-- Versioned asset URL: bump it when cutting a release. The
+       /releases/latest/download/ form would survive a version bump on its own,
+       but only if the asset name never changes, and ours carries the version
+       so a downloaded zip says what it is. -->
+  <div class="actions">
+    <a class="btn btn-primary" href="https://github.com/studio-rischio/My-Pod/releases/download/v1.0/My-Pod-1.0-arm64.zip">Download for macOS</a>
+    <a class="btn" href="https://github.com/studio-rischio/My-Pod">View source on GitHub</a>
+    <a class="btn" href="#get">How to build it</a>
+  </div>
+
+  <p class="actions-note">
+    Version&nbsp;1.0 &middot; 4.2&nbsp;MB &middot; Apple silicon &middot; needs
+    <a href="#get">one command after unzipping</a>.
+  </p>
+
+  <div class="pair">
+    <figure class="pair-wide">
+      <img src="screenshots/02-music-library.webp" width="1400" height="1062"
+           alt="The Music tab: a scrollable list of artists with checkboxes, a dot marking artists not yet on the iPod, and a side panel showing sync selection, new music, and conversion status."
+           fetchpriority="high" decoding="async">
+      <figcaption>Your modern music library</figcaption>
+    </figure>
+    <figure class="pair-tall">
+      <img src="screenshots/photo.webp" width="900" height="1135"
+           alt="A black iPod with a red click wheel on a wooden desk beside coiled white earphones, its screen showing Now Playing: Espresso by Sabrina Carpenter, from Short n' Sweet, with the album cover displayed."
+           fetchpriority="high" decoding="async">
+      <figcaption>Your retro music player</figcaption>
+    </figure>
+  </div>
+</header>
+
+<main>
+
+<section class="wrap">
+  <p class="eyebrow">What it does</p>
+  <h2 class="section-title">Everything iTunes used to, minus iTunes</h2>
+  <p class="lede">
+    Apple dropped iPod support from macOS years ago. My Pod puts a native
+    SwiftUI interface on top of libgpod, so a click-wheel iPod can still be kept
+    in step with a music library on disk.
+  </p>
+
+  <ul class="features">
+    <li>
+      <h3>It notices the iPod</h3>
+      <p>Plug it in and the device is picked up the moment it mounts. No pairing, no setup step.</p>
+    </li>
+    <li>
+      <h3>Your folders, mirrored</h3>
+      <p>Point it at an <code>Artist/Album/Track</code> library and tick what you want. Syncing is a two-way mirror: checked music is added, unchecked music is removed.</p>
+    </li>
+    <li>
+      <h3>New music surfaces itself</h3>
+      <p>Anything not yet on the iPod gets a marker, rolled up onto album and artist rows. It can check new albums for you automatically — newest first, for as long as there&rsquo;s room.</p>
+    </li>
+    <li>
+      <h3>Conversion you don&rsquo;t manage</h3>
+      <p>FLAC, OGG, Opus, WMA and APE are converted to 256&nbsp;kbps AAC, and the iPod plays that copy — the originals stay untouched. Each conversion is cached beside its source, so a file is only ever encoded once.</p>
+    </li>
+    <li>
+      <h3>Cover art that shows up</h3>
+      <p>Artwork is found per album and written into the iPod&rsquo;s database as properly rendered thumbnails.</p>
+    </li>
+    <li>
+      <h3>Playlists as plain files</h3>
+      <p>Backed by ordinary <code>.m3u</code> files you can edit anywhere, with a drag-and-drop editor built in.</p>
+    </li>
+  </ul>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">A sync, start to finish</p>
+  <h2 class="section-title">Nothing is written until you say so</h2>
+  <p class="lede">
+    Every sync opens with a plan of exactly what will change. Each phase after
+    that reports its own progress and can be cancelled — cancelling finishes the
+    track in flight and saves what&rsquo;s already done, so the iPod is never
+    left half-written.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <div class="step-head">
+        <span class="step-num">01</span>
+        <div>
+          <h3>Review</h3>
+          <p>What gets added, removed, left alone, and transcoded.</p>
+        </div>
+      </div>
+      <img class="shot" src="screenshots/03-sync-plan.webp" width="1200" height="910" loading="lazy" decoding="async"
+           alt="The sync plan sheet listing 43 tracks to add, 1 to remove, 2,839 unchanged and 43 needing conversion, with the track to be removed named underneath.">
+    </li>
+    <li>
+      <div class="step-head">
+        <span class="step-num">02</span>
+        <div>
+          <h3>Convert</h3>
+          <p>Only what isn&rsquo;t already cached, with a running estimate.</p>
+        </div>
+      </div>
+      <img class="shot" src="screenshots/04-sync-converting.webp" width="1200" height="910" loading="lazy" decoding="async"
+           alt="The converting phase, showing 3 of 43 tracks done and roughly eighteen seconds remaining.">
+    </li>
+    <li>
+      <div class="step-head">
+        <span class="step-num">03</span>
+        <div>
+          <h3>Copy</h3>
+          <p>Track by track onto the device, naming each as it goes.</p>
+        </div>
+      </div>
+      <img class="shot" src="screenshots/05-sync-copying.webp" width="1200" height="910" loading="lazy" decoding="async"
+           alt="The copying phase, showing 8 of 43 tracks copied and the track currently being written.">
+    </li>
+    <li>
+      <div class="step-head">
+        <span class="step-num">04</span>
+        <div>
+          <h3>Save</h3>
+          <p>Writing the iTunesDB and rendering artwork thumbnails.</p>
+        </div>
+      </div>
+      <img class="shot" src="screenshots/06-sync-saving.webp" width="1200" height="910" loading="lazy" decoding="async"
+           alt="The saving phase, writing the iTunes database and rendering artwork thumbnails.">
+    </li>
+  </ol>
+
+  <figure class="figure-lead">
+    <img class="shot" src="screenshots/07-sync-complete.webp" width="1856" height="1408" loading="lazy" decoding="async"
+         alt="Sync complete: 43 tracks added, 1 removed, 2,839 skipped, and 2,883 now on the iPod.">
+    <figcaption>Done, with a count of what actually changed.</figcaption>
+  </figure>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">Playlists</p>
+  <h2 class="section-title">Ordinary files, not a database</h2>
+  <p class="lede">
+    Playlists are plain <code>.m3u</code> files in a folder you control, so
+    anything can read them and they outlive the app. Drag tracks across from the
+    library to build one, reorder by dragging, and they sync to the iPod as real
+    playlists.
+  </p>
+
+  <figure class="figure-lead">
+    <img class="shot" src="screenshots/08-playlists.webp" width="1856" height="1408" loading="lazy" decoding="async"
+         alt="The Playlists tab: a list of playlists on the left, and the selected playlist's 13 tracks on the right with title, artist and album for each.">
+  </figure>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">The device</p>
+  <h2 class="section-title">What&rsquo;s actually plugged in</h2>
+  <p class="lede">
+    Model, generation, capacity, and where it&rsquo;s mounted. On an iPod whose
+    original drive has been swapped for a CF card or SSD, the installed capacity
+    and the model&rsquo;s stock size are both shown, because they disagree.
+  </p>
+
+  <figure class="figure-lead">
+    <img class="shot" src="screenshots/01-general-tab.webp" width="1856" height="1408" loading="lazy" decoding="async"
+         alt="The General tab, listing device name, model, generation, installed capacity of 255.84 GB alongside a 20 GB stock capacity, track and playlist counts and mount point, with a storage bar along the bottom.">
+  </figure>
+</section>
+
+<section class="wrap" id="get">
+  <p class="eyebrow">Getting it running</p>
+  <h2 class="section-title">Download it, or build it yourself</h2>
+  <p class="lede">
+    The download is self-contained — everything it needs is inside the bundle,
+    so Homebrew isn&rsquo;t required to run it. Building from source needs
+    Homebrew for glib, but still fetches nothing else: libgpod is vendored in
+    the repository and compiled locally.
+  </p>
+
+  <div class="cols">
+    <div>
+      <h3 class="eyebrow eyebrow-tight">Download</h3>
+      <p>
+        Unzip it, drag <strong>My&nbsp;Pod.app</strong> to Applications, then
+        clear the quarantine flag once. The build is signed ad-hoc rather than
+        with an Apple Developer ID, so without this macOS refuses to open it and
+        claims it&rsquo;s damaged — it isn&rsquo;t.
+      </p>
+      <div class="code"><code>xattr -dr com.apple.quarantine \
+      "/Applications/My Pod.app"</code></div>
+      <p class="fine">
+        Or open it the first time through System Settings &rarr; Privacy &amp;
+        Security &rarr; <strong>Open&nbsp;Anyway</strong>. Building from source
+        avoids the whole business. Every version lives on the
+        <a href="https://github.com/studio-rischio/My-Pod/releases">releases page</a>.
+      </p>
+    </div>
+
+    <div>
+      <h3 class="eyebrow eyebrow-tight">Build from source</h3>
+      <ul class="req">
+        <li><dfn>macOS</dfn><span>15.7 or later</span></li>
+        <li><dfn>Xcode</dfn><span>26 or later</span></li>
+        <li><dfn>Homebrew</dfn><span>for glib and pkg-config</span></li>
+      </ul>
+      <div class="code"><code><span class="c"># dependencies</span>
+brew install glib pkg-config
+
+<span class="c"># first build only — generates libgpod's
+# configure script</span>
+brew install autoconf automake libtool \
+             gtk-doc intltool
+
+<span class="c"># build and launch</span>
+git clone https://github.com/studio-rischio/My-Pod.git
+cd My-Pod
+./build.sh</code></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <p>
+    My Pod is MIT licensed. It statically links
+    <a href="https://gitlab.gnome.org/Archive/libgpod">libgpod</a>, which is
+    LGPL 2.1 or later and does the real work of reading and writing the iTunesDB
+    format — see the repository for the full licensing breakdown.
+  </p>
+  <p>
+    iPod, iTunes and macOS are trademarks of Apple Inc. This project is not
+    affiliated with, authorised by, or endorsed by Apple.
+  </p>
+  <p>
+    &copy; 2026 <a href="https://rischio.studio">Studio Rischio LLC</a>.
+  </p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,59 @@
+// Build settings for the My Pod target.
+// Paths assume Apple Silicon Homebrew (/opt/homebrew). If your Homebrew lives
+// elsewhere, override BREW_PREFIX below.
+
+BREW_PREFIX = /opt/homebrew
+
+// Sandbox is disabled: the app needs free access to /Volumes/<iPod> and
+// arbitrary library folders chosen by the user. Re-enable later with
+// security-scoped bookmarks if shipping outside personal use.
+ENABLE_APP_SANDBOX = NO
+ENABLE_HARDENED_RUNTIME = NO
+ENABLE_USER_SELECTED_FILES = readwrite
+
+// The "Build libgpod" run-script phase drives an autotools build that reads and
+// writes several hundred files throughout Vendor/libgpod. Script sandboxing
+// only permits paths declared as phase inputs/outputs, and that file set can't
+// be enumerated ahead of time, so the phase can't run sandboxed at all.
+ENABLE_USER_SCRIPT_SANDBOXING = NO
+
+// Release binaries otherwise ship the linker's debug map: N_OSO stab entries
+// naming every .o file by absolute path, which embeds the builder's home
+// directory ~58 times. `strings` won't show them — they live in the symbol
+// table, not __TEXT — so check with:
+//     nm -ap "<app>/Contents/MacOS/My Pod" | grep -c OSO      # want 0
+// Debug is deliberately left alone so the debugger still works. The .dSYM is
+// still produced and still contains the full build paths by design; that's
+// what it's for, and it must never be uploaded to a release.
+DEPLOYMENT_POSTPROCESSING[config=Release] = YES
+STRIP_INSTALLED_PRODUCT[config=Release] = YES
+STRIP_STYLE[config=Release] = debugging
+
+// Without this Xcode injects com.apple.security.get-task-allow, which lets any
+// process attach a debugger to the shipped app. Fine locally, wrong for a
+// download. Nothing else is lost: the sandbox is off, so the user-selected-files
+// entitlement does nothing, and bundle-app.sh's re-sign was dropping the whole
+// entitlement blob anyway.
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
+
+// Bridging header — exposes ipod-api.h to Swift.
+SWIFT_OBJC_BRIDGING_HEADER = $(SRCROOT)/My Pod/IPodKit/My_Pod-Bridging-Header.h
+
+// Headers needed by ipod-api.c (libgpod + GLib + gdk-pixbuf umbrella).
+HEADER_SEARCH_PATHS = $(inherited) "$(SRCROOT)/My Pod/IPodKit" "$(SRCROOT)/Vendor/libgpod/src" "$(BREW_PREFIX)/opt/glib/include/glib-2.0" "$(BREW_PREFIX)/opt/glib/lib/glib-2.0/include" "$(BREW_PREFIX)/opt/gettext/include" "$(BREW_PREFIX)/include"
+
+// Where to find the Homebrew dylibs at link time.
+LIBRARY_SEARCH_PATHS = $(inherited) "$(BREW_PREFIX)/opt/glib/lib" "$(BREW_PREFIX)/opt/gettext/lib" "$(BREW_PREFIX)/lib"
+
+// Libraries: libgpod is statically linked from the vendored source in
+// Vendor/libgpod, built by Scripts/build-libgpod.sh.
+// Everything else is dynamically linked from Homebrew or the macOS SDK.
+OTHER_LDFLAGS = $(inherited) "$(SRCROOT)/Vendor/libgpod/src/.libs/libgpod.a" -lglib-2.0 -lgobject-2.0 -lgmodule-2.0 -lintl -lplist-2.0 -lxml2 -lgdk_pixbuf-2.0 -lsqlite3 -lz
+
+// libgpod was built without ARC concerns; suppress incidental warnings from it.
+GCC_WARN_UNUSED_VARIABLE = NO
+GCC_WARN_UNUSED_FUNCTION = NO
+
+// Make rpath aware of Homebrew at runtime in case any dylib has its install
+// name set to something other than an absolute path.
+LD_RUNPATH_SEARCH_PATHS = $(inherited) $(BREW_PREFIX)/lib $(BREW_PREFIX)/opt/glib/lib $(BREW_PREFIX)/opt/gettext/lib

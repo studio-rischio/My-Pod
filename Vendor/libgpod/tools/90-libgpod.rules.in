@@ -1,0 +1,25 @@
+# iPods showing up as mass storage devices
+# we check if the current node is a partition even if that may seem useless
+# because the nano5g have data on the block device making it look like a 
+# FAT32 filesystem while it's not (ie can't be mounted). The first
+# partition on the iPod is what should be mounted.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", ENV{DEVTYPE}=="partition", ATTRS{idVendor}=="05ac", ENV{ID_MODEL}=="iPod", IMPORT{program}="@udevdir@/ipod-set-info $tempnode $attr{busnum} $attr{devnum}", GOTO="libgpod_end"
+
+# Some iPod Shuffle (4G) don't have a partition, only a filesystem on the
+# block device. The rule above won't match for such iPods because it wants
+# a partition. And given that some Nano5g have been seen as reporting a
+# filesystem on the block device while they have a partition, we don't want
+# to run the rule below unconditionally. So we add a check for
+# ID_PART_TABLE_TYPE, if it's empty, it means we only have a block device,
+# in which case we can run the callout
+ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", ENV{DEVTYPE}=="disk", ENV{ID_PART_TABLE_TYPE}!="?*", ATTRS{idVendor}=="05ac", ENV{ID_MODEL}=="iPod", IMPORT{program}="@udevdir@/ipod-set-info $tempnode $attr{busnum} $attr{devnum}", GOTO="libgpod_end"
+
+
+# "iPods" using the afc protocol (iPhone, iPod Touch, ...)
+ACTION=="add|change", ENV{USBMUX_SUPPORTED}=="1", IMPORT{program}+="@udevdir@/iphone-set-info", GOTO="libgpod_end"
+# with a new enough usbmuxd, the rule below is not useful since it will
+# take care of setting USBMUX_SUPPORTED for all supported devices. Keep
+# this rule for now until distros ship a new enough usbmuxd
+ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="129[0-9a]", IMPORT{program}+="@udevdir@/iphone-set-info"
+
+LABEL="libgpod_end"
