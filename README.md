@@ -64,6 +64,25 @@ xattr -dr com.apple.quarantine "/Applications/My Pod.app"
 Or open it the first time via System Settings → Privacy & Security → **Open Anyway**. Building from
 source avoids this entirely.
 
+## Connecting the iPod
+
+My Pod detects the iPod the moment macOS mounts it as a disk, so a click-wheel iPod has to be in
+disk mode before it shows up at all. That used to be the *Enable disk use* checkbox in iTunes;
+since modern macOS dropped iPod support, forcing disk mode by hand is what replaces it:
+
+1. If the iPod has a **Hold** switch, slide it on, then back off.
+2. Hold **Menu** and the **centre button** together until the Apple logo appears — roughly 6 to 10
+   seconds.
+3. The moment the logo shows, hold the **centre button** and **Play/Pause** until the screen reads
+   *Disk Mode* or *OK to disconnect*.
+
+The iPod stays in disk mode until it's reset again, so you can sync as normal from there. Eject it
+in My Pod before unplugging, then hold Menu and the centre button once more to boot it back to the
+music menu.
+
+Plenty of iPods mount on their own, having had disk use switched on by whatever last synced them —
+if yours already appears in My Pod, none of this is needed.
+
 ## Requirements
 
 These are for building from source; the release download needs none of them.

@@ -429,6 +429,31 @@
     .cols { grid-template-columns: 1fr 1fr; align-items: start; }
   }
 
+  /* Callout for the one thing that stops the app doing anything at all: an
+     iPod that never mounts. A gold edge rather than a full panel, so it reads
+     as an aside to the section instead of a third column. */
+  .note {
+    margin-top: clamp(2rem, 5vw, 3rem);
+    padding: 1.15rem 1.35rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--gold);
+    border-radius: 10px;
+  }
+  .note h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    margin: 0 0 .55rem;
+  }
+  .note p { margin: 0; max-width: var(--prose); }
+  .note ol {
+    margin: .85rem 0 0;
+    padding-left: 1.2rem;
+    max-width: var(--prose);
+  }
+  .note li { margin: .35rem 0; }
+  .note .fine { margin-top: .95rem; }
+
   /* ---- Footer --------------------------------------------------------- */
   footer {
     border-top: 1px solid var(--line);
@@ -681,6 +706,31 @@ git clone https://github.com/studio-rischio/My-Pod.git
 cd My-Pod
 ./build.sh</code></div>
     </div>
+  </div>
+
+  <div class="note">
+    <h3>If the iPod doesn&rsquo;t show up, put it in disk mode</h3>
+    <p>
+      My&nbsp;Pod finds the iPod the moment macOS mounts it as a disk, so a
+      click-wheel iPod has to be in disk mode to be seen at all. That used to be
+      the <em>Enable disk use</em> checkbox in iTunes — and since modern macOS
+      dropped iPod support, forcing disk mode by hand is what replaces it.
+    </p>
+    <ol>
+      <li>If the iPod has a <strong>Hold</strong> switch, slide it on, then back off.</li>
+      <li>Hold <strong>Menu</strong> and the <strong>centre button</strong> together
+          until the Apple logo appears — roughly 6 to 10 seconds.</li>
+      <li>The moment the logo shows, hold the <strong>centre button</strong> and
+          <strong>Play/Pause</strong> until the screen reads <em>Disk Mode</em> or
+          <em>OK to disconnect</em>.</li>
+    </ol>
+    <p class="fine">
+      It stays in disk mode until it&rsquo;s reset again, so you can sync as
+      normal from there. Eject it in My&nbsp;Pod before unplugging, then hold
+      Menu and the centre button once more to boot it back to the music menu.
+      Plenty of iPods mount on their own, having had disk use switched on by
+      whatever last synced them — if yours already appears, skip all of this.
+    </p>
   </div>
 </section>
 
