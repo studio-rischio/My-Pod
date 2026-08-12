@@ -148,6 +148,14 @@ Swift talks to libgpod through `IPodKit/ipod-api.c`, a small C wrapper that keep
 
 Built on [libgpod](https://gitlab.gnome.org/Archive/libgpod), which does the real work of reading and writing the iTunesDB format. The copy in `Vendor/libgpod` is a modified fork.
 
+## How this was built
+
+This project was built with heavy use of [Claude Code](https://claude.com/claude-code), Anthropic's AI coding assistant. Commits it contributed to carry a `Co-Authored-By` trailer, so the record is in the git history rather than only here.
+
+What that does and doesn't mean: the architecture, the hardware constraints the app works around, and the decision about what actually ships are human calls. There is no automated test suite in this repository — verification is done by building the app and syncing to real click-wheel iPods, and that's how every release is checked before it goes out.
+
+This section exists because people asked. If you're running software on hardware you care about, it's fair to know how it was made.
+
 ## License
 
 The split follows the directory layout:
