@@ -130,6 +130,17 @@ is the identity used by the sync selection set, the plan's playlist diff, and th
   causes playback skipping. Any change to encoder settings must bump
   `ConversionService.cacheVersion`, which invalidates every cached `.m4a` in the hidden `.mypod/`
   folders.
+- **Conversion is decided by contents, not extension** (`AudioFormat.needsConversion(_:probe:)` +
+  `AudioProbe`). `.m4a` covers both 256 kbps AAC and 24-bit/96 kHz ALAC, so `LibraryScanner` opens
+  natively wrapped files and re-encodes them when they exceed `AudioFormat.maxSampleRate` (44100),
+  are lossless above 16-bit, or carry an HE-AAC layer. Two traps: **HE-AAC only shows up in
+  `kAudioFilePropertyFormatList`** — the data format reports a plain half-rate `aac` core, so
+  checking `formatID` alone silently misses it, and the effective sample rate is the max across
+  layers rather than the core's; and `mBitsPerChannel` is 0 for ALAC, whose depth lives in
+  `mFormatFlags`. `mp3` is deliberately excluded from probing (the format can't exceed what the
+  hardware handles, and probing it would dominate scan cost). A nil probe means "leave it alone", so
+  unreadable or DRM'd files keep their old behaviour. Widening these rules does **not** need a
+  `cacheVersion` bump — encoder settings are unchanged, so existing cached `.m4a` files stay valid.
 - **Transcoded files carry no tags.** afconvert output has no metadata; title/artist/album/artwork
   are written into the iPod database instead. That is intentional — do not "fix" it by embedding
   tags, and expect cached `.m4a` files to look blank in Finder/Music.app.

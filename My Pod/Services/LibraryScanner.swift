@@ -74,7 +74,16 @@ nonisolated enum LibraryScanner {
             let baseName = fileURL.deletingPathExtension().lastPathComponent
             let (trackNumber, title) = parseFilename(baseName)
             let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
-            let needsConversion = AudioFormat.needsConversion(ext)
+
+            // The extension can't see inside the container: a 24-bit/96 kHz
+            // ALAC and a 256k AAC are both `.m4a`. Probe the ones that could
+            // plausibly be out of spec, and reuse that single read for the
+            // duration below rather than opening the file twice.
+            let probe = AudioFormat.shouldProbe(ext) ? AudioProbe.read(fileURL) : nil
+            let needsConversion = AudioFormat.needsConversion(ext, probe: probe)
+            if needsConversion, let probe {
+                Log.library.debug("out of spec, will convert: \(fileURL.lastPathComponent) — \(probe.summary)")
+            }
 
             tracks.append(LibraryTrack(
                 id: fileURL,
@@ -85,9 +94,10 @@ nonisolated enum LibraryScanner {
                 fileExtension: ext.lowercased(),
                 sizeBytes: size,
                 needsConversion: needsConversion,
-                // Only worth reading for convertible formats — native files
-                // sync byte-for-byte, so their size needs no estimating.
-                durationMS: needsConversion ? FLACHeader.durationMS(of: fileURL) : 0
+                // Only worth reading for files we'll convert — the rest sync
+                // byte-for-byte, so their size needs no estimating. The probe
+                // already carries a duration; FLAC needs its own header read.
+                durationMS: needsConversion ? (probe?.durationMS ?? FLACHeader.durationMS(of: fileURL)) : 0
             ))
         }
         // Sort: by track number ascending (with 0/no-number after), then by name.
