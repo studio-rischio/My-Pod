@@ -38,7 +38,8 @@ body:
       label: Which iPod
       description: Firmware differs enough between these that the model usually matters.
       options:
-        - iPod Photo / 4th generation
+        - iPod photo (4th generation, colour)
+        - iPod 4th generation (monochrome click wheel)
         - iPod 5th generation (video)
         - iPod classic (6th generation)
         - iPod mini
