@@ -93,12 +93,44 @@ struct GeneralTabView: View {
 
                 Divider()
 
+                syncModeRow
+
+                Divider()
+
                 Text("Conversion")
                     .font(.subheadline)
                     .fontWeight(.medium)
                 ConversionSectionView(store: libraryStore)
             }
             .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The iTunes sync radio. Kept in the same order and near enough the same
+    /// wording, because it's the control anyone who synced an iPod before 2019
+    /// will be looking for.
+    @ViewBuilder
+    private var syncModeRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("Sync")
+                .frame(width: 110, alignment: .leading)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("", selection: $libraryStore.syncMode) {
+                    Text("Entire music library").tag(MusicLibraryStore.SyncMode.entireLibrary)
+                    Text("Selected playlists, artists and albums").tag(MusicLibraryStore.SyncMode.selected)
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+
+                Text(libraryStore.syncMode == .entireLibrary
+                     ? "Everything in your library syncs, and the checkboxes in the Music and Playlists tabs are turned off."
+                     : "Check what you want in the Music and Playlists tabs. Checking a playlist also syncs the tracks it contains.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

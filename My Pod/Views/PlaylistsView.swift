@@ -10,6 +10,9 @@ import SwiftUI
 ///
 /// That makes `Refresh` load-bearing rather than a convenience: it's the only
 /// way a file edited outside the app reaches this list.
+private let wholeLibraryPlaylistReason =
+    "Sync is set to your entire music library, so every playlist goes. Change it in General to pick what syncs."
+
 struct PlaylistsView: View {
     @Bindable var playlistStore: PlaylistStore
     @Bindable var libraryStore: MusicLibraryStore
@@ -30,7 +33,11 @@ struct PlaylistsView: View {
     private var playlistList: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                TristateCheckbox(state: playlistStore.selectionState) {
+                TristateCheckbox(
+                    state: libraryStore.selectionIsLocked ? .on : playlistStore.selectionState,
+                    locked: libraryStore.selectionIsLocked,
+                    lockReason: wholeLibraryPlaylistReason
+                ) {
                     // Same rule as the library tree: mixed resolves to on.
                     if playlistStore.selectionState == .on {
                         playlistStore.clearSelection()
@@ -57,9 +64,9 @@ struct PlaylistsView: View {
 
                 Menu {
                     Button("Select All") { playlistStore.selectAll() }
-                        .disabled(playlistStore.playlists.isEmpty)
+                        .disabled(playlistStore.playlists.isEmpty || libraryStore.selectionIsLocked)
                     Button("Deselect All") { playlistStore.clearSelection() }
-                        .disabled(playlistStore.selectionCount == 0)
+                        .disabled(playlistStore.selectionCount == 0 || libraryStore.selectionIsLocked)
                     Divider()
                     Toggle("Select new playlists automatically", isOn: $playlistStore.autoSelectNewPlaylists)
                 } label: {
@@ -91,7 +98,8 @@ struct PlaylistsView: View {
                     ForEach(playlistStore.playlists) { playlist in
                         PlaylistRow(
                             playlist: playlist,
-                            checkState: playlistStore.isSelected(playlist) ? .on : .off,
+                            checkState: isChecked(playlist) ? .on : .off,
+                            locked: libraryStore.selectionIsLocked,
                             isNew: playlistStore.isNew(playlist),
                             onToggle: { playlistStore.toggleSelected(playlist) }
                         )
@@ -100,6 +108,7 @@ struct PlaylistsView: View {
                             Button(playlistStore.isSelected(playlist) ? "Don't Sync" : "Sync to iPod") {
                                 playlistStore.toggleSelected(playlist)
                             }
+                            .disabled(libraryStore.selectionIsLocked)
                             Divider()
                             Button("Show in Finder") {
                                 NSWorkspace.shared.activateFileViewerSelecting([playlist.fileURL])
@@ -111,7 +120,9 @@ struct PlaylistsView: View {
             }
 
             HStack {
-                Text("\(playlistStore.selectionCount) of \(playlistStore.playlists.count) selected")
+                Text(libraryStore.selectionIsLocked
+                     ? "All \(playlistStore.playlists.count) syncing"
+                     : "\(playlistStore.selectionCount) of \(playlistStore.playlists.count) selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -180,21 +191,20 @@ struct PlaylistsView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
-                // The per-playlist sync checkbox that used to live here was
-                // redundant with the one on every row in the left list. The
-                // warning beside it was not, and stays: it's the only thing
-                // telling you that checking a playlist does not pull its tracks
-                // onto the iPod.
-                if playlistStore.isSelected(playlist), unsyncedEntryCount(playlist) > 0 {
+                // Checking a playlist now selects its tracks, so this warning
+                // no longer fires for unchecked music. What's left is entries
+                // pointing outside the library, which no amount of checking can
+                // fix — worth surfacing, since the .m3u looks fine on disk.
+                if isChecked(playlist), unsyncedEntryCount(playlist) > 0 {
                     HStack(spacing: 6) {
-                        Label("\(unsyncedEntryCount(playlist)) of \(playlist.trackCount) entries won't sync", systemImage: "exclamationmark.circle")
+                        Label("\(unsyncedEntryCount(playlist)) of \(playlist.trackCount) entries aren't in your library", systemImage: "exclamationmark.circle")
                             .font(.caption)
                             .foregroundStyle(.orange)
                         Spacer()
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
-                    .help("These entries point at tracks that aren't checked in the Music tab. Checking a playlist doesn't select its tracks — the iPod copy will skip them.")
+                    .help("These entries point at files outside your music library folder, so there's nothing for My Pod to copy. The rest of the playlist syncs normally.")
                 }
 
                 Divider()
@@ -248,19 +258,28 @@ struct PlaylistsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Whether a sync would actually write this entry. The engine resolves
-    /// entries against what ends up on the iPod, and only tracks checked in
-    /// the Music tab get there — so an entry whose file isn't in the library
-    /// selection is silently dropped from the iPod copy.
+    /// Whether a sync would actually write this entry.
+    ///
+    /// Checking a playlist now selects its tracks, so an entry only fails here
+    /// for one of two reasons: the playlist itself isn't checked, or the file
+    /// sits outside the scanned library and there is nothing to select. The
+    /// second is the interesting one — a `.m3u` pointing at music that isn't
+    /// under the library root can never sync, however it's checked.
     private func willSync(_ entry: PlaylistEntry) -> Bool {
         let path = entry.resolvedURL(libraryRoot: libraryStore.libraryRoot).path
-        let selected = libraryStore.selectedTrackPaths
+        let selected = libraryStore.effectiveSelectedPaths
         if selected.contains(path) { return true }
         // A .m3u written by another tool can carry the opposite Unicode
         // normalization for the same filename — macOS hands out NFD paths,
         // most other things write NFC.
         if selected.contains(path.precomposedStringWithCanonicalMapping) { return true }
         return selected.contains(path.decomposedStringWithCanonicalMapping)
+    }
+
+    /// Whole-library mode syncs every playlist, so the row reads as checked
+    /// even though nothing is stored in the playlist store's selection.
+    private func isChecked(_ playlist: Playlist) -> Bool {
+        libraryStore.selectionIsLocked || playlistStore.isSelected(playlist)
     }
 
     private func unsyncedEntryCount(_ playlist: Playlist) -> Int {
@@ -283,12 +302,18 @@ struct PlaylistsView: View {
 private struct PlaylistRow: View {
     let playlist: Playlist
     let checkState: SelectionCheckState
+    let locked: Bool
     let isNew: Bool
     let onToggle: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            TristateCheckbox(state: checkState, toggle: onToggle)
+            TristateCheckbox(
+                state: checkState,
+                locked: locked,
+                lockReason: wholeLibraryPlaylistReason,
+                toggle: onToggle
+            )
             Image(systemName: "music.note.list").foregroundStyle(.secondary)
             Text(playlist.name)
                 .lineLimit(1)
@@ -337,10 +362,10 @@ private struct EntryRow: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
             } else if !willSync {
-                Text("Not selected")
+                Text("Won't sync")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .help("Check this track in the Music tab for it to reach the iPod.")
+                    .help("Either this playlist isn't checked, or the file sits outside your music library folder.")
             }
         }
         .help(entry.path)

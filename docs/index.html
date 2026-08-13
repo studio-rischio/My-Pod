@@ -497,13 +497,13 @@
        but only if the asset name never changes, and ours carries the version
        so a downloaded zip says what it is. -->
   <div class="actions">
-    <a class="btn btn-primary" href="https://github.com/studio-rischio/My-Pod/releases/download/v1.2/My-Pod-1.2-arm64.zip">Download for macOS</a>
+    <a class="btn btn-primary" href="https://github.com/studio-rischio/My-Pod/releases/download/v1.3/My-Pod-1.3-arm64.zip">Download for macOS</a>
     <a class="btn" href="https://github.com/studio-rischio/My-Pod">View source on GitHub</a>
     <a class="btn" href="#get">How to build it</a>
   </div>
 
   <p class="actions-note">
-    Version&nbsp;1.2 &middot; 4.2&nbsp;MB &middot; Apple silicon &middot; needs
+    Version&nbsp;1.3 &middot; 4.2&nbsp;MB &middot; Apple silicon &middot; needs
     <a href="#get">one command after unzipping</a>.
   </p>
 
@@ -541,7 +541,7 @@
     </li>
     <li>
       <h3>Your folders, mirrored</h3>
-      <p>Point it at an <code>Artist/Album/Track</code> library and tick what you want. Syncing is a two-way mirror: checked music is added, unchecked music is removed.</p>
+      <p>Point it at an <code>Artist/Album/Track</code> library and sync all of it, or tick exactly what you want. Syncing is a two-way mirror: checked music is added, unchecked music is removed.</p>
     </li>
     <li>
       <h3>New music surfaces itself</h3>
@@ -557,7 +557,7 @@
     </li>
     <li>
       <h3>Playlists as plain files</h3>
-      <p>Backed by ordinary <code>.m3u</code> files you can edit anywhere, with a drag-and-drop editor built in.</p>
+      <p>Ordinary <code>.m3u</code> files you can edit anywhere. Check a playlist and the tracks it points at come with it.</p>
     </li>
   </ul>
 </section>
@@ -631,9 +631,10 @@
   <h2 class="section-title">Ordinary files, not a database</h2>
   <p class="lede">
     Playlists are plain <code>.m3u</code> files in a folder you control, so
-    anything can read them and they outlive the app. Drag tracks across from the
-    library to build one, reorder by dragging, and they sync to the iPod as real
-    playlists.
+    anything can read them and they outlive the app. Build them in Finder, a text
+    editor, or any app that writes <code>.m3u</code>. Check one in My Pod and it
+    syncs as a real iPod playlist &mdash; along with the tracks it references, so
+    you never have to go and tick those separately.
   </p>
 
   <figure class="figure-lead">

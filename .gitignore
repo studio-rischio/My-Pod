@@ -112,3 +112,6 @@ Vendor/libgpod/po/stamp-it
 # Full-resolution screenshot originals. The repo ships the resized .webp
 # versions; these are kept locally so a re-encode doesn't mean re-shooting.
 /docs/screenshots/_originals/
+
+# Release artifacts, built by ./Scripts/bundle-app.sh + ditto.
+/My-Pod-*-arm64.zip

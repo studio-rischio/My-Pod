@@ -9,11 +9,11 @@ Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI in
 ## Features
 
 - **Automatic device detection** — the iPod is picked up as soon as it mounts; no pairing or setup.
-- **Library mirroring** — pick a Plex-structured folder (`Root/Artist/Album/Track`) and check the artists, albums or tracks you want. Sync is a two-way mirror: checked music is added, unchecked music is removed.
+- **Library mirroring** — pick a Plex-structured folder (`Root/Artist/Album/Track`) and either sync all of it or check the artists, albums and tracks you want. Sync is a two-way mirror: checked music is added, unchecked music is removed.
 - **New-music highlighting** — anything in your library that isn't on the iPod is marked with a dot, rolled up onto album and artist rows, and counted in the toolbar. Optionally it's checked for you automatically, newest albums first, for as long as the device has room.
 - **Transcoding** — FLAC, OGG, Opus, WMA and APE are converted to AAC 256 kbps `.m4a` via `afconvert`, cached in a hidden `.mypod/` folder beside the source so a given file is only ever encoded once. Files that are *already* AAC or ALAC get checked rather than trusted: hi-res, 24-bit and HE-AAC ones are re-encoded too, since a click-wheel iPod skips or muffles them.
 - **Cover art** — artwork is located per album and written into the iPod's database as rendered thumbnails.
-- **Playlists** — backed by plain `.m3u` files in `~/Music/MyPodPlaylists/`, with a drag-and-drop editor.
+- **Playlists** — read from a folder of plain `.m3u` files. Checking a playlist syncs the tracks it contains, so you can put music on the iPod by playlist alone.
 - **Dock progress** — sync progress is drawn onto the app icon, so you can start a sync and switch away.
 
 ### Browsing and selecting music
@@ -42,7 +42,9 @@ Sync runs in phases, each with its own progress and a working cancel. Cancelling
 
 ### Playlists
 
-Backed by plain `.m3u` files in `~/Music/MyPodPlaylists/`, so anything can read them. Drag tracks across from the library to build one; they sync to the iPod as real playlists.
+Read from a folder of plain `.m3u` files (`~/Music/MyPodPlaylists/` unless you point it elsewhere), so anything can read or write them. Checking one syncs both the playlist and the tracks it references — you don't have to check those tracks separately in the Music tab.
+
+Playlists are authored outside My Pod for now: build them in Finder, a text editor, or any music app that writes `.m3u`, then hit Refresh. An in-app editor will come back once it can pull tracks across from the library.
 
 ![The Playlists tab, showing a playlist and its tracks](docs/screenshots/08-playlists.webp)
 
@@ -135,6 +137,8 @@ Swift talks to libgpod through `IPodKit/ipod-api.c`, a small C wrapper that keep
 ## How it works
 
 **Library layout.** Music is read from a Plex-style tree — `Root/Artist/Album/Track`. Track numbers and titles are parsed from filenames.
+
+**What syncs.** General ▸ Library offers the same two choices iTunes did: *Entire music library*, or *Selected playlists, artists and albums*. In the second mode the checkboxes in the Music and Playlists tabs decide what goes, and a checked playlist also selects the tracks it points at — so checking one playlist and nothing else puts exactly that playlist's music on the iPod. Tracks held on by a playlist show a checked, greyed-out box; uncheck the playlist to release them.
 
 **Matching.** The iPod's database doesn't store source file paths, so library tracks are matched to device tracks on `(artist, album, title)`, Unicode-normalised so accented titles compare equal across the filesystem and the database.
 

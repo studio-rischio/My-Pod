@@ -11,6 +11,12 @@ enum SelectionCheckState: Equatable { case off, on, mixed }
 /// means (e.g. mixed → on).
 struct TristateCheckbox: View {
     let state: SelectionCheckState
+    /// Shown, but not changeable — the state is being decided elsewhere. Used
+    /// when the sync mode is "Entire music library", and for a track a checked
+    /// playlist requires. A checkbox that silently ignored the click would be
+    /// worse than one that visibly can't be clicked.
+    var locked: Bool = false
+    var lockReason: String? = nil
     let toggle: () -> Void
 
     var body: some View {
@@ -22,6 +28,9 @@ struct TristateCheckbox: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .disabled(locked)
+        .opacity(locked ? 0.55 : 1)
+        .help(lockReason ?? "")
         .accessibilityLabel(accessibilityLabel)
     }
 

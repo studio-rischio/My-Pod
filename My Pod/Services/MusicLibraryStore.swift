@@ -19,11 +19,57 @@ final class MusicLibraryStore {
     private(set) var library: MusicLibrary = .empty
     private(set) var scanState: ScanState = .idle
 
-    /// File paths of tracks selected for sync. Source of truth — artist/album
-    /// tristate is derived from this. Stored as paths (not URLs) to avoid the
-    /// URL canonicalization issues that bit us when selection state went out of
-    /// sync with the rendered tree.
+    /// How much of the library syncs. Mirrors iTunes, where the same choice
+    /// governed both playlists and per-item checkboxes: in `.entireLibrary`
+    /// every track and every playlist goes, and the checkboxes in both tabs are
+    /// inert. Lives here rather than in a settings object of its own because
+    /// everything it changes is downstream of `effectiveSelectedPaths`.
+    enum SyncMode: String {
+        case entireLibrary
+        case selected
+    }
+
+    var syncMode: SyncMode {
+        didSet {
+            guard syncMode != oldValue else { return }
+            defaults.set(syncMode.rawValue, forKey: syncModeKey)
+            Log.library.info("sync mode: \(self.syncMode.rawValue)")
+            recomputeEffectiveSelection()
+        }
+    }
+
+    /// File paths of tracks the user checked by hand. Persisted, and the source
+    /// of truth for what a checkbox *writes*. Stored as paths (not URLs) to
+    /// avoid the URL canonicalization issues that bit us when selection state
+    /// went out of sync with the rendered tree.
+    ///
+    /// Read `effectiveSelectedPaths` instead when you want to know what will
+    /// actually sync — a track can be on because a checked playlist needs it,
+    /// or because the mode is `.entireLibrary`, without ever appearing here.
     private(set) var selectedTrackPaths: Set<String> = []
+
+    /// Library paths pulled in by checked playlists. Derived, never persisted:
+    /// it's recomputed from the playlist store's selection whenever that or the
+    /// library changes.
+    private(set) var playlistDerivedPaths: Set<String> = []
+
+    /// What a sync will actually copy — the union of the manual checkboxes and
+    /// the playlists' contents, or the whole library in `.entireLibrary` mode.
+    ///
+    /// Stored rather than computed on demand: `state(for:)` runs per tree row,
+    /// and unioning two multi-thousand-element sets on every redraw of every
+    /// row is not free. Recomputed from `selectionDidChange()`, which every
+    /// mutation path already funnels through.
+    private(set) var effectiveSelectedPaths: Set<String> = []
+
+    /// Every track path in the scanned library. Cached at scan time because
+    /// `.entireLibrary` mode and playlist path resolution both need it.
+    @ObservationIgnored private var allLibraryPaths: Set<String> = []
+
+    /// Playlist-resolved paths exactly as the playlist store handed them over,
+    /// kept so a rescan can re-resolve them against the new library without
+    /// asking for them again.
+    @ObservationIgnored private var rawPlaylistPaths: Set<String> = []
 
     /// Names of currently-expanded artists.
     var expandedArtists: Set<String> = []
@@ -98,8 +144,14 @@ final class MusicLibraryStore {
     private let selectionKey = "MyPod.selectedTracks"
     private let autoSelectKey = "MyPod.autoSelectNewMusic"
     private let autoOfferedKey = "MyPod.autoOfferedTracks"
+    private let syncModeKey = "MyPod.syncMode"
 
     init() {
+        // Existing installs have a selection they built by hand, so the default
+        // has to be `.selected` — defaulting to `.entireLibrary` would quietly
+        // widen every upgrader's next sync to their whole library.
+        self.syncMode = UserDefaults.standard.string(forKey: "MyPod.syncMode")
+            .flatMap(SyncMode.init(rawValue:)) ?? .selected
         // Defaults to on for a fresh install — `object(forKey:)` distinguishes
         // "never set" from an explicit false, which `bool(forKey:)` can't.
         self.autoSelectNewMusic = defaults.object(forKey: autoSelectKey) as? Bool ?? true
@@ -115,6 +167,10 @@ final class MusicLibraryStore {
         if let stored = defaults.array(forKey: selectionKey) as? [String] {
             self.selectedTrackPaths = Set(stored)
         }
+        // `allLibraryPaths` is still empty here, so `.entireLibrary` resolves to
+        // nothing until the scan lands and recomputes — which is correct: there
+        // is no library yet to select all of.
+        recomputeEffectiveSelection()
         if libraryRoot != nil {
             rescan()
         }
@@ -135,6 +191,9 @@ final class MusicLibraryStore {
         defaults.removeObject(forKey: rootKey)
         library = .empty
         scanState = .idle
+        allLibraryPaths = []
+        resolvePlaylistPaths()
+        recomputeEffectiveSelection()
     }
 
     func rescan() {
@@ -153,6 +212,102 @@ final class MusicLibraryStore {
         }
     }
 
+    // MARK: - Effective selection
+
+    private func recomputeEffectiveSelection() {
+        switch syncMode {
+        case .entireLibrary:
+            effectiveSelectedPaths = allLibraryPaths
+        case .selected:
+            effectiveSelectedPaths = selectedTrackPaths.union(playlistDerivedPaths)
+        }
+    }
+
+    /// Take the set of library paths that checked playlists require.
+    ///
+    /// Pushed in from `ContentView` rather than read from the playlist store
+    /// directly, matching how `applyDeviceSnapshot` already works — the two
+    /// stores stay independent and the data flows one way.
+    ///
+    /// Paths arrive as written in the `.m3u`, which may carry either Unicode
+    /// normalization: macOS hands out NFD, most other tools write NFC. They're
+    /// canonicalized here against the scanned library, because this is the only
+    /// place that knows what the real paths are.
+    func applyPlaylistSelection(_ rawPaths: Set<String>) {
+        rawPlaylistPaths = rawPaths
+        resolvePlaylistPaths()
+    }
+
+    private func resolvePlaylistPaths() {
+        var resolved: Set<String> = []
+        resolved.reserveCapacity(rawPlaylistPaths.count)
+        for raw in rawPlaylistPaths {
+            // Anything that doesn't match points outside the library — a
+            // playlist referencing a file that was moved or never scanned.
+            // Dropping it here is what makes the "entries aren't in your
+            // library" warning meaningful rather than a lie.
+            if let match = canonicalLibraryPath(for: raw) {
+                resolved.insert(match)
+            }
+        }
+        guard resolved != playlistDerivedPaths else { return }
+        let unresolved = rawPlaylistPaths.count - resolved.count
+        playlistDerivedPaths = resolved
+        recomputeEffectiveSelection()
+        Log.playlist.info("playlist selection contributes \(resolved.count) library tracks\(unresolved > 0 ? " (\(unresolved) unresolved)" : "")")
+    }
+
+    /// Match one `.m3u` entry to the scanned library, or nil if it names a file
+    /// the library doesn't contain.
+    ///
+    /// Two ways the same file gets two different path strings, and both have to
+    /// be handled or checking a playlist silently selects nothing:
+    ///
+    /// **Unicode normalization.** macOS hands out NFD; most other tools write
+    /// NFC. `Café` and `Café` are different `String`s.
+    ///
+    /// **Symlinks.** `LibraryScanner`'s enumerator yields fully resolved paths
+    /// — a library under `/tmp` scans as `/private/tmp` — while an `.m3u` keeps
+    /// whatever was written into it. Same file, no string match.
+    ///
+    /// The cheap comparisons run first and the filesystem is only touched when
+    /// they all miss, so the common case costs three set lookups and no I/O.
+    ///
+    /// Note `realpath(3)` rather than `URL.resolvingSymlinksInPath()`: Foundation
+    /// special-cases `/var`, `/tmp` and `/etc` by *stripping* a `/private`
+    /// prefix, which is the opposite of what the enumerator produced, so it
+    /// resolves this exact mismatch in the wrong direction.
+    private func canonicalLibraryPath(for raw: String) -> String? {
+        if let hit = matchIgnoringNormalization(raw) { return hit }
+        guard let buffer = realpath(raw, nil) else { return nil }
+        defer { free(buffer) }
+        let resolved = String(cString: buffer)
+        guard resolved != raw else { return nil }
+        return matchIgnoringNormalization(resolved)
+    }
+
+    private func matchIgnoringNormalization(_ path: String) -> String? {
+        if allLibraryPaths.contains(path) { return path }
+        let pre = path.precomposedStringWithCanonicalMapping
+        if allLibraryPaths.contains(pre) { return pre }
+        let dec = path.decomposedStringWithCanonicalMapping
+        if allLibraryPaths.contains(dec) { return dec }
+        return nil
+    }
+
+    /// Whether this track syncs regardless of its own checkbox — because a
+    /// checked playlist needs it, or because the whole library is going.
+    /// The tree uses this to disable a checkbox that couldn't do anything.
+    func isForced(_ track: LibraryTrack) -> Bool {
+        switch syncMode {
+        case .entireLibrary: true
+        case .selected: playlistDerivedPaths.contains(track.url.path)
+        }
+    }
+
+    /// True when per-track checkboxes can't change anything at all.
+    var selectionIsLocked: Bool { syncMode == .entireLibrary }
+
     // MARK: - Selection
 
     func toggleTrack(_ track: LibraryTrack) {
@@ -165,7 +320,7 @@ final class MusicLibraryStore {
             selectedTrackPaths.insert(key)
             willBeOn = true
         }
-        persistSelection()
+        selectionDidChange()
         Log.library.debug("track \(willBeOn ? "+" : "-"): \(track.artist) — \(track.album) — \(track.title)")
     }
 
@@ -176,7 +331,7 @@ final class MusicLibraryStore {
         } else {
             for t in album.tracks { selectedTrackPaths.remove(t.url.path) }
         }
-        persistSelection()
+        selectionDidChange()
         let delta = selected ? (album.tracks.count - before) : before
         Log.library.info("album \(selected ? "selected" : "deselected"): \(album.artist) — \(album.name) (\(delta) of \(album.tracks.count) tracks changed)")
     }
@@ -190,7 +345,7 @@ final class MusicLibraryStore {
                 totalTracks += 1
             }
         }
-        persistSelection()
+        selectionDidChange()
         Log.library.info("artist \(selected ? "selected" : "deselected"): \(artist.name) (\(totalTracks) tracks)")
     }
 
@@ -202,19 +357,21 @@ final class MusicLibraryStore {
             }
         }
         selectedTrackPaths = s
-        persistSelection()
+        selectionDidChange()
         Log.library.info("select all: \(s.count) tracks")
     }
 
     func clearSelection() {
         let prev = selectedTrackPaths.count
         selectedTrackPaths.removeAll()
-        persistSelection()
+        selectionDidChange()
         Log.library.info("clear selection (was \(prev) tracks)")
     }
 
+    /// Reflects what will sync, not just what the user ticked — a track a
+    /// checked playlist needs reads as selected here.
     func isSelected(_ track: LibraryTrack) -> Bool {
-        selectedTrackPaths.contains(track.url.path)
+        effectiveSelectedPaths.contains(track.url.path)
     }
 
     // MARK: - Highlight (multi-row selection scaffold)
@@ -294,7 +451,7 @@ final class MusicLibraryStore {
                 tracksTouched += 1
             }
         }
-        persistSelection()
+        selectionDidChange()
         Log.library.info("bulk \(selected ? "selected" : "deselected") \(highlightedRowIDs.count) highlighted rows (\(artistsTouched) artists, \(albumsTouched) albums, \(tracksTouched) tracks)")
     }
 
@@ -305,7 +462,7 @@ final class MusicLibraryStore {
     func state(for album: LibraryAlbum) -> CheckState {
         let total = album.tracks.count
         guard total > 0 else { return .off }
-        let selected = self.selectedTrackPaths
+        let selected = self.effectiveSelectedPaths
         let on = album.tracks.lazy.filter { selected.contains($0.url.path) }.count
         if on == 0 { return .off }
         if on == total { return .on }
@@ -313,7 +470,7 @@ final class MusicLibraryStore {
     }
 
     func state(for artist: LibraryArtist) -> CheckState {
-        let selected = self.selectedTrackPaths
+        let selected = self.effectiveSelectedPaths
         var anyOn = false, anyOff = false
         for album in artist.albums {
             for t in album.tracks {
@@ -325,7 +482,7 @@ final class MusicLibraryStore {
     }
 
     var selectionSize: UInt64 {
-        let selected = selectedTrackPaths
+        let selected = effectiveSelectedPaths
         var total: UInt64 = 0
         for artist in library.artists {
             for album in artist.albums {
@@ -338,7 +495,7 @@ final class MusicLibraryStore {
     }
 
     var selectionTrackCount: Int {
-        selectedTrackPaths.count
+        effectiveSelectedPaths.count
     }
 
     // MARK: - Expansion
@@ -381,7 +538,7 @@ final class MusicLibraryStore {
     }
 
     private var selectedLibraryTracks: [LibraryTrack] {
-        let selected = selectedTrackPaths
+        let selected = effectiveSelectedPaths
         var out: [LibraryTrack] = []
         for artist in library.artists {
             for album in artist.albums {
@@ -491,7 +648,9 @@ final class MusicLibraryStore {
     /// left exactly as the user left them — if they've unchecked something,
     /// re-checking it here would fight them.
     private func runAutoSelection() {
-        guard autoSelectNewMusic,
+        // Nothing to auto-select when everything is already going.
+        guard syncMode == .selected,
+              autoSelectNewMusic,
               let snapshot = deviceSnapshot,
               !newTrackPaths.isEmpty else { return }
 
@@ -545,7 +704,7 @@ final class MusicLibraryStore {
 
         guard chosenTracks > 0 || skippedAlbums > 0 else { return }
         if chosenTracks > 0 {
-            persistSelection()
+            selectionDidChange()
             persistAutoOffered()
         }
         Log.library.info("auto-selected \(chosenTracks) new tracks in \(chosenAlbums) albums; \(skippedAlbums) albums didn't fit (\(budget) bytes left)")
@@ -553,8 +712,12 @@ final class MusicLibraryStore {
 
     // MARK: - Persistence
 
-    private func persistSelection() {
+    /// Every mutation of `selectedTrackPaths` funnels through here, which is
+    /// why the effective-selection recompute hangs off it rather than off each
+    /// individual setter.
+    private func selectionDidChange() {
         defaults.set(Array(selectedTrackPaths), forKey: selectionKey)
+        recomputeEffectiveSelection()
     }
 
     private func persistAutoOffered() {
@@ -565,8 +728,15 @@ final class MusicLibraryStore {
         let allPaths: Set<String> = Set(
             lib.artists.flatMap { $0.albums.flatMap { $0.tracks.map { $0.url.path } } }
         )
+        // Cache before anything downstream reads it: `.entireLibrary` resolves
+        // straight to this set, and playlist paths are canonicalized against it.
+        allLibraryPaths = allPaths
         selectedTrackPaths.formIntersection(allPaths)
-        persistSelection()
+        // Re-resolve rather than intersect. A path that failed to match the old
+        // library may match this one — a renamed folder, or a drive that came
+        // back — and intersection alone would leave it dropped forever.
+        resolvePlaylistPaths()
+        selectionDidChange()
         // Keep the offered set from growing forever as files come and go. A
         // track that leaves the library and later returns gets offered again,
         // which is the right call — it's new to the iPod all over again.

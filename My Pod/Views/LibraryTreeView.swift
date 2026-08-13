@@ -43,12 +43,16 @@ struct LibraryTreeView: View {
 
 // MARK: - Rows
 
+/// Why a checkbox in the tree can't be clicked. Shared by all three row types.
+private let wholeLibraryLockReason =
+    "Sync is set to your entire music library. Change it in General to pick what syncs."
+
 private struct ArtistRow: View {
     @Bindable var store: MusicLibraryStore
     let artist: LibraryArtist
 
     var body: some View {
-        let _ = store.selectedTrackPaths
+        let _ = store.effectiveSelectedPaths
         let _ = store.highlightedRowIDs
         let rowID = MusicLibraryStore.artistRowID(artist)
         let isHighlighted = store.highlightedRowIDs.contains(rowID)
@@ -60,7 +64,11 @@ private struct ArtistRow: View {
                 if isExpanded { store.expandedArtists.remove(artist.name) }
                 else { store.expandedArtists.insert(artist.name) }
             },
-            checkbox: TristateCheckbox(state: store.state(for: artist)) {
+            checkbox: TristateCheckbox(
+                state: store.state(for: artist),
+                locked: store.selectionIsLocked,
+                lockReason: wholeLibraryLockReason
+            ) {
                 let next = store.state(for: artist) != .on
                 if isHighlighted, store.highlightedRowIDs.count > 1 {
                     store.applyToHighlights(next)
@@ -89,7 +97,7 @@ private struct AlbumRow: View {
     let album: LibraryAlbum
 
     var body: some View {
-        let _ = store.selectedTrackPaths
+        let _ = store.effectiveSelectedPaths
         let _ = store.highlightedRowIDs
         let rowID = MusicLibraryStore.albumRowID(album)
         let isHighlighted = store.highlightedRowIDs.contains(rowID)
@@ -102,7 +110,11 @@ private struct AlbumRow: View {
                 if isExpanded { store.expandedAlbums.remove(albumKey) }
                 else { store.expandedAlbums.insert(albumKey) }
             },
-            checkbox: TristateCheckbox(state: store.state(for: album)) {
+            checkbox: TristateCheckbox(
+                state: store.state(for: album),
+                locked: store.selectionIsLocked,
+                lockReason: wholeLibraryLockReason
+            ) {
                 let next = store.state(for: album) != .on
                 if isHighlighted, store.highlightedRowIDs.count > 1 {
                     store.applyToHighlights(next)
@@ -136,8 +148,10 @@ private struct TrackRow: View {
     let track: LibraryTrack
 
     var body: some View {
+        let _ = store.effectiveSelectedPaths
         let _ = store.highlightedRowIDs
-        let isOn = store.selectedTrackPaths.contains(track.url.path)
+        let isOn = store.isSelected(track)
+        let isForced = store.isForced(track)
         let rowID = MusicLibraryStore.trackRowID(track)
         let isHighlighted = store.highlightedRowIDs.contains(rowID)
 
@@ -146,7 +160,13 @@ private struct TrackRow: View {
             // Tracks have no children; render an invisible spacer the same
             // width as a chevron so columns line up across rows.
             chevron: nil,
-            checkbox: TristateCheckbox(state: isOn ? .on : .off) {
+            checkbox: TristateCheckbox(
+                state: isOn ? .on : .off,
+                locked: isForced,
+                lockReason: store.selectionIsLocked
+                    ? wholeLibraryLockReason
+                    : "A checked playlist needs this track. Uncheck the playlist to leave it off the iPod."
+            ) {
                 if isHighlighted, store.highlightedRowIDs.count > 1 {
                     store.applyToHighlights(!isOn)
                 } else {

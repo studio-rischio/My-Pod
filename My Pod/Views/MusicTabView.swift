@@ -112,9 +112,16 @@ struct MusicTabView: View {
 
             HStack {
                 Button("Select All") { store.selectAll() }
-                    .disabled(store.library.totalTracks == 0)
+                    .disabled(store.library.totalTracks == 0 || store.selectionIsLocked)
                 Button("Clear") { store.clearSelection() }
-                    .disabled(store.selectedTrackPaths.isEmpty)
+                    .disabled(store.selectedTrackPaths.isEmpty || store.selectionIsLocked)
+            }
+
+            if store.selectionIsLocked {
+                Text("Syncing your entire music library. Change this in General to pick what syncs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Divider()
@@ -134,6 +141,7 @@ struct MusicTabView: View {
 
             Toggle("Select new music automatically", isOn: $store.autoSelectNewMusic)
                 .help("Check new albums as they appear — newest first, for as long as the iPod has room.")
+                .disabled(store.selectionIsLocked)
 
             if store.deviceSnapshot == nil {
                 Text("Connect your iPod to see what's new.")

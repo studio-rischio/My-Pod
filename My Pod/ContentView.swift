@@ -37,12 +37,43 @@ struct ContentView: View {
             libraryStore.applyDeviceSnapshot(snapshot)
             playlistStore.applyDeviceSnapshot(snapshot)
         }
+        // Checking a playlist selects its tracks. Same one-way push as the
+        // device snapshot above: the playlist store resolves its entries to
+        // paths, the library store canonicalizes them against the scan.
+        //
+        // Three triggers, because three different things invalidate the set:
+        // the user checking a playlist, a reload picking up edited .m3u files,
+        // and a new library root changing what relative entries resolve to.
+        .onChange(of: playlistStore.selectedNameKeys, initial: true) { _, _ in
+            pushPlaylistSelection()
+        }
+        .onChange(of: playlistStore.playlists.map(\.id)) { _, _ in
+            pushPlaylistSelection()
+        }
+        .onChange(of: libraryStore.libraryRoot) { _, _ in
+            pushPlaylistSelection()
+        }
         .task {
             DockProgressTracker.shared.start(engine: syncEngine, store: libraryStore)
         }
         .sheet(isPresented: $showSyncSheet) {
             SyncSheetView(engine: syncEngine, onCommit: commitSync)
         }
+    }
+
+    private func pushPlaylistSelection() {
+        libraryStore.applyPlaylistSelection(
+            playlistStore.selectedTrackPaths(libraryRoot: libraryStore.libraryRoot)
+        )
+    }
+
+    /// Playlists bound for the iPod. In `.entireLibrary` mode the per-playlist
+    /// checkboxes are inert and everything goes, matching iTunes — where the
+    /// same radio governed playlists and tracks together.
+    private var playlistsToSync: [Playlist] {
+        libraryStore.syncMode == .entireLibrary
+            ? playlistStore.playlists
+            : playlistStore.selectedPlaylists
     }
 
     private var canSync: Bool {
@@ -62,8 +93,8 @@ struct ContentView: View {
             await syncEngine.plan(
                 libraryRoot: root,
                 library: libraryStore.library,
-                selectedPaths: libraryStore.selectedTrackPaths,
-                playlists: playlistStore.selectedPlaylists,
+                selectedPaths: libraryStore.effectiveSelectedPaths,
+                playlists: playlistsToSync,
                 device: device
             )
         }
@@ -78,7 +109,7 @@ struct ContentView: View {
             await syncEngine.execute(
                 plan: plan,
                 libraryRoot: root,
-                playlists: playlistStore.selectedPlaylists,
+                playlists: playlistsToSync,
                 device: device
             )
             // Refresh device info + storage so the bottom bar reflects the new totals.

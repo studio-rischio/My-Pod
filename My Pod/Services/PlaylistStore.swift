@@ -181,6 +181,25 @@ final class PlaylistStore {
         playlists.filter { selectedNameKeys.contains($0.nameKey) }
     }
 
+    /// File paths every entry of every checked playlist points at.
+    ///
+    /// This is what makes checking a playlist put its music on the iPod, the
+    /// way iTunes always behaved: the paths are handed to `MusicLibraryStore`,
+    /// which unions them into the effective sync selection.
+    ///
+    /// Returned as written in the `.m3u` (resolved against `libraryRoot` for
+    /// relative entries) and deliberately not normalized here — matching them
+    /// to real files needs the scanned library, which lives on the other side.
+    func selectedTrackPaths(libraryRoot: URL?) -> Set<String> {
+        var paths: Set<String> = []
+        for playlist in selectedPlaylists {
+            for entry in playlist.entries {
+                paths.insert(entry.resolvedURL(libraryRoot: libraryRoot).path)
+            }
+        }
+        return paths
+    }
+
     var selectionCount: Int { selectedPlaylists.count }
 
     /// State for the list header's select-all checkbox.
