@@ -1,33 +1,28 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
+/// Read-only view of the `.m3u` files in the playlist folder.
+///
+/// Editing was removed deliberately: the tab could create and rename playlists
+/// but had no way to get tracks into one from the Music tab, so every path
+/// through it ended at an empty playlist. Until that gap is filled, playlists
+/// are authored wherever they already live — Finder, a text editor, another
+/// music app — and My Pod's job is to show them and sync the checked ones.
+///
+/// That makes `Refresh` load-bearing rather than a convenience: it's the only
+/// way a file edited outside the app reaches this list.
 struct PlaylistsView: View {
     @Bindable var playlistStore: PlaylistStore
     @Bindable var libraryStore: MusicLibraryStore
 
     @State private var selection: UUID?
-    @State private var renamingID: UUID?
-    @State private var draftName: String = ""
-    @State private var creating: Bool = false
-    @State private var newName: String = ""
-    @State private var error: String?
 
     var body: some View {
         HSplitView {
             playlistList
                 .frame(minWidth: 220, idealWidth: 260)
-            editor
+            detail
                 .frame(minWidth: 360)
         }
-        .alert("Playlist error", isPresented: errorBinding, presenting: error) { _ in
-            Button("OK", role: .cancel) { error = nil }
-        } message: { msg in
-            Text(msg)
-        }
-    }
-
-    private var errorBinding: Binding<Bool> {
-        Binding(get: { error != nil }, set: { if !$0 { error = nil } })
     }
 
     // MARK: - Left: list of playlists
@@ -76,61 +71,44 @@ struct PlaylistsView: View {
                 .help("Selection options")
 
                 Button {
-                    creating = true
-                    newName = ""
+                    Log.ui.info("user refreshed playlists")
+                    playlistStore.reload()
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
-                .help("Create a new playlist")
+                .help("Re-read the playlist folder — use this after editing a .m3u file elsewhere")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
             Divider()
 
-            List(selection: $selection) {
-                if creating {
-                    HStack(spacing: 8) {
-                        Image(systemName: "music.note.list").foregroundStyle(.secondary)
-                        TextField("New Playlist", text: $newName, onCommit: commitNewPlaylist)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Cancel") {
-                            creating = false
-                            newName = ""
+            if playlistStore.playlists.isEmpty {
+                emptyFolderState
+            } else {
+                List(selection: $selection) {
+                    ForEach(playlistStore.playlists) { playlist in
+                        PlaylistRow(
+                            playlist: playlist,
+                            checkState: playlistStore.isSelected(playlist) ? .on : .off,
+                            isNew: playlistStore.isNew(playlist),
+                            onToggle: { playlistStore.toggleSelected(playlist) }
+                        )
+                        .tag(playlist.id)
+                        .contextMenu {
+                            Button(playlistStore.isSelected(playlist) ? "Don't Sync" : "Sync to iPod") {
+                                playlistStore.toggleSelected(playlist)
+                            }
+                            Divider()
+                            Button("Show in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([playlist.fileURL])
+                            }
                         }
-                        .buttonStyle(.borderless)
                     }
                 }
-                ForEach(playlistStore.playlists) { playlist in
-                    PlaylistRow(
-                        playlist: playlist,
-                        checkState: playlistStore.isSelected(playlist) ? .on : .off,
-                        isNew: playlistStore.isNew(playlist),
-                        isRenaming: renamingID == playlist.id,
-                        draftName: $draftName,
-                        onToggle: { playlistStore.toggleSelected(playlist) },
-                        onCommitRename: commitRename,
-                        onCancelRename: { renamingID = nil }
-                    )
-                    .tag(playlist.id)
-                    .contextMenu {
-                        Button(playlistStore.isSelected(playlist) ? "Don't Sync" : "Sync to iPod") {
-                            playlistStore.toggleSelected(playlist)
-                        }
-                        Divider()
-                        Button("Rename") { startRename(playlist) }
-                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([playlist.fileURL]) }
-                        Divider()
-                        Button("Delete", role: .destructive) { playlistStore.delete(id: playlist.id) }
-                    }
-                }
+                .listStyle(.sidebar)
             }
-            .listStyle(.sidebar)
-            .dropDestination(for: URL.self) { urls, _ in
-                handleListDrop(urls)
-                return true
-            } isTargeted: { _ in }
 
             HStack {
                 Text("\(playlistStore.selectionCount) of \(playlistStore.playlists.count) selected")
@@ -153,10 +131,31 @@ struct PlaylistsView: View {
         }
     }
 
-    // MARK: - Right: selected playlist editor
+    private var emptyFolderState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "music.note.list")
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
+            Text("No playlists")
+                .font(.headline)
+            Text("Put .m3u files in the playlist folder, then refresh.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Show Folder in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([playlistStore.directory])
+            }
+            .controlSize(.small)
+            .padding(.top, 2)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Right: selected playlist contents
 
     @ViewBuilder
-    private var editor: some View {
+    private var detail: some View {
         if let id = selection, let playlist = playlistStore.playlists.first(where: { $0.id == id }) {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
@@ -181,38 +180,49 @@ struct PlaylistsView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
-                HStack(spacing: 8) {
-                    Toggle("Sync this playlist to the iPod", isOn: Binding(
-                        get: { playlistStore.isSelected(playlist) },
-                        set: { playlistStore.setSelected(playlist, $0) }
-                    ))
-                    .toggleStyle(.checkbox)
-                    Spacer()
-                    if playlistStore.isSelected(playlist), unsyncedEntryCount(playlist) > 0 {
-                        Label("\(unsyncedEntryCount(playlist)) won't sync", systemImage: "exclamationmark.circle")
+                // The per-playlist sync checkbox that used to live here was
+                // redundant with the one on every row in the left list. The
+                // warning beside it was not, and stays: it's the only thing
+                // telling you that checking a playlist does not pull its tracks
+                // onto the iPod.
+                if playlistStore.isSelected(playlist), unsyncedEntryCount(playlist) > 0 {
+                    HStack(spacing: 6) {
+                        Label("\(unsyncedEntryCount(playlist)) of \(playlist.trackCount) entries won't sync", systemImage: "exclamationmark.circle")
                             .font(.caption)
                             .foregroundStyle(.orange)
-                            .help("These entries point at tracks that aren't checked in the Music tab, so the iPod copy will skip them.")
+                        Spacer()
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .help("These entries point at tracks that aren't checked in the Music tab. Checking a playlist doesn't select its tracks — the iPod copy will skip them.")
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
 
                 Divider()
+                    .padding(.top, 8)
 
                 if playlist.entries.isEmpty {
-                    emptyDropTarget(playlistID: id)
+                    emptyPlaylistState
                 } else {
                     entryList(for: playlist)
                 }
 
                 Divider()
 
-                Text("Drop tracks from the Library tab onto this list to add them.")
+                HStack(spacing: 6) {
+                    Text(playlist.fileURL.lastPathComponent)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([playlist.fileURL])
+                    }
+                    .buttonStyle(.borderless)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
             }
         } else {
             VStack(spacing: 12) {
@@ -225,6 +235,17 @@ struct PlaylistsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var emptyPlaylistState: some View {
+        VStack(spacing: 6) {
+            Text("This playlist is empty")
+                .foregroundStyle(.secondary)
+            Text("Add tracks to the .m3u file, then refresh.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Whether a sync would actually write this entry. The engine resolves
@@ -255,96 +276,7 @@ struct PlaylistsView: View {
                     willSync: willSync(entry)
                 )
             }
-            .onMove { source, destination in
-                playlistStore.moveEntries(playlistID: playlist.id, from: source, to: destination)
-            }
-            .onDelete { offsets in
-                playlistStore.removeEntries(playlistID: playlist.id, at: offsets)
-            }
         }
-        .dropDestination(for: URL.self) { urls, _ in
-            handlePlaylistDrop(urls, playlistID: playlist.id)
-            return true
-        } isTargeted: { _ in }
-    }
-
-    private func emptyDropTarget(playlistID: UUID) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray.and.arrow.down")
-                .font(.system(size: 36))
-                .foregroundStyle(.tertiary)
-            Text("Drop tracks here")
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .dropDestination(for: URL.self) { urls, _ in
-            handlePlaylistDrop(urls, playlistID: playlistID)
-            return true
-        } isTargeted: { _ in }
-    }
-
-    // MARK: - Actions
-
-    private func commitNewPlaylist() {
-        let trimmed = newName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else {
-            creating = false
-            return
-        }
-        do {
-            let playlist = try playlistStore.create(name: trimmed)
-            selection = playlist.id
-        } catch {
-            self.error = error.localizedDescription
-        }
-        creating = false
-        newName = ""
-    }
-
-    private func startRename(_ playlist: Playlist) {
-        renamingID = playlist.id
-        draftName = playlist.name
-    }
-
-    private func commitRename() {
-        guard let id = renamingID else { return }
-        do {
-            try playlistStore.rename(id: id, to: draftName)
-        } catch {
-            self.error = error.localizedDescription
-        }
-        renamingID = nil
-        draftName = ""
-    }
-
-    /// Drops onto the playlist list itself: only used for importing external
-    /// .m3u/.m3u8 files (a track URL with no destination playlist is ambiguous,
-    /// so we ignore those here).
-    private func handleListDrop(_ urls: [URL]) {
-        for url in urls {
-            let ext = url.pathExtension.lowercased()
-            if ext == "m3u" || ext == "m3u8" {
-                do { _ = try playlistStore.importExternal(url) } catch {
-                    self.error = error.localizedDescription
-                }
-            }
-        }
-    }
-
-    /// Drops onto a specific playlist's entry list: audio files become entries;
-    /// .m3u files are ignored here (use the left list to import).
-    private func handlePlaylistDrop(_ urls: [URL], playlistID: UUID) {
-        let audioURLs = urls.filter { url in
-            let ext = url.pathExtension.lowercased()
-            return ext != "m3u" && ext != "m3u8"
-        }
-        guard !audioURLs.isEmpty else { return }
-        playlistStore.addEntries(
-            playlistID: playlistID,
-            fileURLs: audioURLs,
-            libraryRoot: libraryStore.libraryRoot
-        )
     }
 }
 
@@ -352,36 +284,26 @@ private struct PlaylistRow: View {
     let playlist: Playlist
     let checkState: SelectionCheckState
     let isNew: Bool
-    let isRenaming: Bool
-    @Binding var draftName: String
     let onToggle: () -> Void
-    let onCommitRename: () -> Void
-    let onCancelRename: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             TristateCheckbox(state: checkState, toggle: onToggle)
             Image(systemName: "music.note.list").foregroundStyle(.secondary)
-            if isRenaming {
-                TextField("Name", text: $draftName, onCommit: onCommitRename)
-                    .textFieldStyle(.roundedBorder)
-                    .onExitCommand(perform: onCancelRename)
-            } else {
-                Text(playlist.name)
-                    .lineLimit(1)
-                    .foregroundStyle(checkState == .on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                if isNew {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 6))
-                        .foregroundStyle(Color.accentColor)
-                        .help("Not on the iPod yet")
-                }
-                Spacer()
-                Text("\(playlist.trackCount)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+            Text(playlist.name)
+                .lineLimit(1)
+                .foregroundStyle(checkState == .on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            if isNew {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 6))
+                    .foregroundStyle(Color.accentColor)
+                    .help("Not on the iPod yet")
             }
+            Spacer()
+            Text("\(playlist.trackCount)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
     }
 }

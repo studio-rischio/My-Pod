@@ -277,6 +277,11 @@ private struct TreeChevron: View {
 
 /// `.draggable` only takes a value, not an optional. Apply it conditionally
 /// so leaf-only `TrackRow` can pass a URL while artist/album rows skip it.
+///
+/// This outlived the playlist drop targets it was added for, and is kept on
+/// purpose: with playlist editing gone, `.m3u` files are authored in other
+/// apps, and dragging tracks out of here into one of them is now the workflow
+/// rather than a side effect.
 private struct DraggableModifier: ViewModifier {
     let url: URL?
     func body(content: Content) -> some View {
