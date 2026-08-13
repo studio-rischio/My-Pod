@@ -59,6 +59,13 @@ final class SyncEngine {
         cancelRequested = false
         let iPodTracks = await device.tracks()
         let devicePlaylists = await device.userPlaylists()
+
+        if let refusal = Self.refusalReason(library: library, iPodTrackCount: iPodTracks.count) {
+            Log.sync.error("refusing to plan: library scanned 0 tracks while the iPod holds \(iPodTracks.count)")
+            state = .failed(refusal)
+            return
+        }
+
         let plan = Self.computePlan(
             libraryRoot: libraryRoot,
             library: library,
@@ -71,6 +78,36 @@ final class SyncEngine {
         Log.sync.info("plan: +\(plan.toAddCount) -\(plan.toRemoveCount), \(plan.unchangedCount) unchanged, \(plan.pendingConversion.count) need convert")
         Log.playlist.info("plan: playlists +\(plan.playlists(.added).count) -\(plan.playlists(.removed).count) ~\(plan.playlists(.modified).count), \(plan.playlists(.unchanged).count) unchanged")
         state = .planned(plan)
+    }
+
+    /// Why a sync must not be planned, or nil to proceed.
+    ///
+    /// `LibraryScanner` fails soft: an unreadable root — an external drive that
+    /// isn't mounted, a renamed folder — returns an empty library rather than an
+    /// error, and is then indistinguishable from a real one. Because the desired
+    /// set is `selected ∩ scanned` (see `computePlan`), an empty scan drops every
+    /// track and the plan becomes "remove everything on the device".
+    ///
+    /// That plan is shown before it runs, so it isn't silent, but it is one
+    /// confirmation away from erasing an iPod because a cable was loose. Wiping
+    /// is the only mistake here that destroys something the user can't get back
+    /// from this app, so it's refused rather than offered.
+    ///
+    /// Deliberately narrow. Unticking everything in a library that *did* scan
+    /// still clears the device — that's an explicit instruction, and it leaves
+    /// `totalTracks > 0`. The cost is that a genuinely empty library folder can
+    /// no longer be used to empty an iPod, which is a fair trade for the
+    /// failure it prevents.
+    static func refusalReason(library: MusicLibrary, iPodTrackCount: Int) -> String? {
+        guard library.totalTracks == 0, iPodTrackCount > 0 else { return nil }
+        return """
+            Your music library scanned as empty, but the iPod holds \(iPodTrackCount) \
+            track\(iPodTrackCount == 1 ? "" : "s"). Syncing now would remove all of them.
+
+            This usually means the library folder can't be read — an external drive \
+            that isn't connected, or a folder that moved or was renamed. Check that \
+            \(library.root.path) is available, then scan again.
+            """
     }
 
     static func computePlan(
