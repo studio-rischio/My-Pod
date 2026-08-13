@@ -142,6 +142,10 @@ Swift talks to libgpod through `IPodKit/ipod-api.c`, a small C wrapper that keep
 
 **What counts as playable.** A file extension isn't proof — `.m4a` covers both 256 kbps AAC and 24-bit/96 kHz ALAC, and only one of those plays properly. Natively wrapped files are opened and inspected, and re-encoded when their contents are out of spec: above 44.1 kHz, lossless above 16-bit, or any HE-AAC. HE-AAC has to be read out of the codec layer list, because such a file reports itself as an ordinary half-rate AAC stream and would otherwise slip through and play back muffled. MP3s are exempt from the check, since the format can't exceed what the hardware handles.
 
+**Why it converts more than it strictly has to.** Those rules are deliberately conservative, and some files that get re-encoded would probably have played fine. That's the intended trade. An unnecessary re-encode costs a little quality on a device whose output stage is 16-bit anyway; a file that turns out to be unplayable costs a track that silently skips or refuses to start, with nothing on screen to explain why. Testing on an iPod Photo, for example, found 48 kHz files playing cleanly — but the original reason for forcing 44.1 kHz was *intermittent* skipping over a full album, which a short test can't rule out. So the threshold stays where it is.
+
+The goal is that a sync always works, not that it extracts every last bit of fidelity the hardware can theoretically manage. If you'd rather have the latter, [Rockbox](https://www.rockbox.org) replaces the iPod's firmware and plays considerably more than the stock software will.
+
 **Metadata.** `afconvert` output carries no tags, so title, artist, album and artwork are written directly into the iPod database rather than embedded in the file. The iPod displays everything correctly; previewing a cached `.m4a` in Finder or Music.app will show no tags.
 
 ## Acknowledgements

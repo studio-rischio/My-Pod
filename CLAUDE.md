@@ -123,6 +123,29 @@ Playlists have the same problem and the same answer: `Playlist.nameKey` (NFC, tr
 is the identity used by the sync selection set, the plan's playlist diff, and the Playlists tab's
 "not on the iPod yet" dots. `Playlist.id` is a fresh UUID on every `reload()`, so it can't be it.
 
+## Design principle: guaranteed playback beats maximum quality
+
+When a format decision is ambiguous, **convert**. The thresholds in `AudioFormat` are deliberately
+tighter than what the hardware is documented to accept, and tighter than what a given iPod may in
+practice play.
+
+The failure modes are asymmetric. An unnecessary re-encode costs a little quality on a device whose
+output stage is 16-bit regardless — nobody has ever filed a bug about it. A file passed through that
+turns out to be unplayable costs a silent skip or a track that won't start, on hardware with no error
+reporting, where the user cannot tell what went wrong or that the app is even involved.
+
+Concretely: `maxSampleRate` stays at 44100 even though iPod classic is documented to 48 kHz, and
+even though hardware testing on an iPod Photo found both 48 kHz AAC and 24-bit/48 kHz ALAC playing
+cleanly. The original finding that motivated 44.1 kHz was *intermittent skipping across a full
+album*, and a short clip playing correctly cannot disprove that. 24-bit lossless is likewise
+re-encoded even where it plays, because the output pipeline is 16-bit either way.
+
+**Do not relax these to recover quality.** Anyone wanting the device's full capability has Rockbox
+and other replacement firmware; this app's contract is that a sync always works. Relaxing a
+threshold requires evidence of the *absence* of failure across full-length material on multiple
+models — not the presence of success in a short test. Adding a threshold needs much less evidence
+than removing one.
+
 ## Constraints that break real hardware if changed casually
 
 - **afconvert flags** (`ConversionService.export`): `-s 2` (constrained VBR, not `-s 3`), forced
