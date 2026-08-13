@@ -2,15 +2,27 @@ import SwiftUI
 
 struct GeneralTabView: View {
     @Bindable var controller: IPodController
+    @Bindable var libraryStore: MusicLibraryStore
+    @Bindable var playlistStore: PlaylistStore
     @State private var showResetConfirm = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                // Device state first, then Library. Library is deliberately
+                // outside the connected/disconnected branch: choosing folders
+                // is the first thing a new user does, and requiring an iPod to
+                // be plugged in before the app will let them do it is backwards.
                 if let info = controller.deviceInfo {
                     deviceSection(info)
                 } else {
-                    placeholderSection
+                    noDeviceSection
+                }
+
+                librarySection
+
+                if controller.deviceInfo != nil {
+                    dangerZone
                 }
             }
             .padding(20)
@@ -50,15 +62,79 @@ struct GeneralTabView: View {
             .padding(.vertical, 4)
         }
 
-        GroupBox("Sync Options") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Library and conversion options will appear here.")
-                    .foregroundStyle(.secondary)
+    }
+
+    // MARK: - Library
+
+    private var librarySection: some View {
+        GroupBox("Library") {
+            VStack(alignment: .leading, spacing: 12) {
+                pathRow(
+                    label: "Music",
+                    path: libraryStore.libraryRoot?.path,
+                    placeholder: "No folder chosen",
+                    help: "A Plex-structured folder: Library/Artist/Album/Track."
+                ) {
+                    if let url = FolderPicker.chooseLibraryRoot() {
+                        libraryStore.chooseRoot(url)
+                    }
+                }
+
+                pathRow(
+                    label: "Playlists",
+                    path: playlistStore.directory.path,
+                    placeholder: "",
+                    help: "The folder My Pod reads .m3u playlists from."
+                ) {
+                    if let url = FolderPicker.choosePlaylistFolder() {
+                        playlistStore.chooseDirectory(url)
+                    }
+                }
+
+                Divider()
+
+                Text("Conversion")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                ConversionSectionView(store: libraryStore)
             }
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
 
+    /// One folder setting: label, current path, and the button that changes it.
+    private func pathRow(
+        label: String,
+        path: String?,
+        placeholder: String,
+        help: String,
+        change: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .frame(width: 110, alignment: .leading)
+                .foregroundStyle(.secondary)
+            if let path {
+                Text((path as NSString).abbreviatingWithTildeInPath)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(path)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(placeholder)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button(path == nil ? "Choose…" : "Change…", action: change)
+        }
+        .help(help)
+    }
+
+    // MARK: - Danger zone
+
+    private var dangerZone: some View {
         GroupBox("Danger Zone") {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -92,17 +168,28 @@ struct GeneralTabView: View {
         }
     }
 
-    private var placeholderSection: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "ipod")
-                .font(.system(size: 64))
-                .foregroundStyle(.tertiary)
-            Text("No iPod connected")
-                .font(.title3)
-            Text("Plug an iPod into a USB port to get started.")
-                .foregroundStyle(.secondary)
+    /// Deliberately a compact box rather than the full-height empty state it
+    /// used to be. Library settings sit directly below and have to stay on
+    /// screen with nothing plugged in — a 320pt placeholder would push them
+    /// under the fold on exactly the run where they matter most.
+    private var noDeviceSection: some View {
+        GroupBox("Device") {
+            HStack(spacing: 14) {
+                Image(systemName: "ipod")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.tertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("No iPod connected")
+                        .font(.headline)
+                    Text("Plug an iPod in and put it in disk mode.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, minHeight: 320)
     }
 
     private func byteCount(_ bytes: UInt64) -> String {

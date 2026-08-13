@@ -58,11 +58,21 @@ final class PlaylistStore {
     private let selectionKey = "MyPod.selectedPlaylists"
     private let offeredKey = "MyPod.offeredPlaylists"
     private let autoSelectKey = "MyPod.autoSelectNewPlaylists"
+    // Static so `init` can read it before the instance is fully initialized.
+    private static let directoryKey = "MyPod.playlistDirectory"
 
+    /// Where playlists live when the user has never chosen a folder.
+    static var defaultDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Music/MyPodPlaylists", isDirectory: true)
+    }
+
+    /// `directory` is an explicit argument only for tests; normal construction
+    /// takes the user's stored choice, falling back to `defaultDirectory`.
     init(directory: URL? = nil) {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let fallback = home.appendingPathComponent("Music/MyPodPlaylists", isDirectory: true)
-        self.directory = directory ?? fallback
+        let stored = UserDefaults.standard.string(forKey: Self.directoryKey)
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        self.directory = directory ?? stored ?? Self.defaultDirectory
         // `object(forKey:)` rather than `bool(forKey:)` so a fresh install
         // (never set) defaults to on while an explicit false is honoured.
         self.autoSelectNewPlaylists = defaults.object(forKey: autoSelectKey) as? Bool ?? true
@@ -78,6 +88,25 @@ final class PlaylistStore {
 
     private func ensureDirectoryExists() {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    /// Point the store at a different folder of `.m3u` files.
+    ///
+    /// Selection state deliberately survives the move. It's keyed by
+    /// `Playlist.nameKey` rather than by path, so keys belonging to the old
+    /// folder simply never match and sit inert — and a playlist in the new
+    /// folder that happens to share a name with one you'd checked arrives
+    /// checked. That's the same rule as renaming a file in place, which is the
+    /// behaviour worth being consistent with. `offeredNameKeys` follows the
+    /// same logic: a same-named playlist counts as already offered, so
+    /// auto-select won't re-check something you unchecked before.
+    func chooseDirectory(_ url: URL) {
+        guard url != directory else { return }
+        Log.playlist.info("playlist folder chosen: \(url.path)")
+        directory = url
+        defaults.set(url.path, forKey: Self.directoryKey)
+        ensureDirectoryExists()
+        reload()
     }
 
     func reload() {

@@ -33,7 +33,11 @@ struct MainTabView: View {
             Group {
                 switch selection {
                 case .general:
-                    GeneralTabView(controller: controller)
+                    GeneralTabView(
+                        controller: controller,
+                        libraryStore: libraryStore,
+                        playlistStore: playlistStore
+                    )
                 case .music:
                     MusicTabView(store: libraryStore)
                 case .playlists:
