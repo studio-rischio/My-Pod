@@ -310,8 +310,32 @@ final class MusicLibraryStore {
 
     // MARK: - Selection
 
+    /// Record that the user decided this by hand, so auto-selection won't
+    /// revisit it.
+    ///
+    /// Without this, unchecking an album that's already on the iPod starts a
+    /// loop: the sync removes it, removal makes it "not on the iPod", "not on
+    /// the iPod" is the definition of new, and auto-selection checks it again on
+    /// the next device refresh. The user unchecks it once and the app puts it
+    /// back — every time.
+    ///
+    /// Applied in both directions, matching `PlaylistStore.setSelected`. Marking
+    /// only on uncheck would leave a track the user checked by hand unprotected
+    /// the first time they later uncheck it.
+    ///
+    /// Note this is the *manual* counterpart to the insert inside
+    /// `runAutoSelection`, and deliberately unlike the skipped-for-space case
+    /// there, which stays unrecorded so it gets another chance when room frees.
+    private func recordManualTouch(_ paths: some Sequence<String>) {
+        let before = autoOfferedPaths.count
+        autoOfferedPaths.formUnion(paths)
+        guard autoOfferedPaths.count != before else { return }
+        persistAutoOffered()
+    }
+
     func toggleTrack(_ track: LibraryTrack) {
         let key = track.url.path
+        recordManualTouch([key])
         let willBeOn: Bool
         if selectedTrackPaths.contains(key) {
             selectedTrackPaths.remove(key)
@@ -331,6 +355,7 @@ final class MusicLibraryStore {
         } else {
             for t in album.tracks { selectedTrackPaths.remove(t.url.path) }
         }
+        recordManualTouch(album.tracks.map(\.url.path))
         selectionDidChange()
         let delta = selected ? (album.tracks.count - before) : before
         Log.library.info("album \(selected ? "selected" : "deselected"): \(album.artist) — \(album.name) (\(delta) of \(album.tracks.count) tracks changed)")
@@ -338,13 +363,16 @@ final class MusicLibraryStore {
 
     func setArtistSelected(_ artist: LibraryArtist, _ selected: Bool) {
         var totalTracks = 0
+        var touched: [String] = []
         for album in artist.albums {
             for t in album.tracks {
                 let key = t.url.path
                 if selected { selectedTrackPaths.insert(key) } else { selectedTrackPaths.remove(key) }
+                touched.append(key)
                 totalTracks += 1
             }
         }
+        recordManualTouch(touched)
         selectionDidChange()
         Log.library.info("artist \(selected ? "selected" : "deselected"): \(artist.name) (\(totalTracks) tracks)")
     }
@@ -357,6 +385,7 @@ final class MusicLibraryStore {
             }
         }
         selectedTrackPaths = s
+        recordManualTouch(s)
         selectionDidChange()
         Log.library.info("select all: \(s.count) tracks")
     }
@@ -364,6 +393,9 @@ final class MusicLibraryStore {
     func clearSelection() {
         let prev = selectedTrackPaths.count
         selectedTrackPaths.removeAll()
+        // Clearing is a statement about the whole library, so the whole library
+        // counts as decided — otherwise auto-selection refills it immediately.
+        recordManualTouch(allLibraryPaths)
         selectionDidChange()
         Log.library.info("clear selection (was \(prev) tracks)")
     }
@@ -421,6 +453,7 @@ final class MusicLibraryStore {
     func applyToHighlights(_ selected: Bool) {
         guard !highlightedRowIDs.isEmpty else { return }
         var artistsTouched = 0, albumsTouched = 0, tracksTouched = 0
+        var touched: [String] = []
         for rowID in highlightedRowIDs {
             if rowID.hasPrefix("artist:") {
                 let name = String(rowID.dropFirst("artist:".count))
@@ -429,6 +462,7 @@ final class MusicLibraryStore {
                     for t in album.tracks {
                         if selected { selectedTrackPaths.insert(t.url.path) }
                         else { selectedTrackPaths.remove(t.url.path) }
+                        touched.append(t.url.path)
                     }
                 }
                 artistsTouched += 1
@@ -442,15 +476,18 @@ final class MusicLibraryStore {
                 for t in album.tracks {
                     if selected { selectedTrackPaths.insert(t.url.path) }
                     else { selectedTrackPaths.remove(t.url.path) }
+                    touched.append(t.url.path)
                 }
                 albumsTouched += 1
             } else if rowID.hasPrefix("track:") {
                 let path = String(rowID.dropFirst("track:".count))
                 if selected { selectedTrackPaths.insert(path) }
                 else { selectedTrackPaths.remove(path) }
+                touched.append(path)
                 tracksTouched += 1
             }
         }
+        recordManualTouch(touched)
         selectionDidChange()
         Log.library.info("bulk \(selected ? "selected" : "deselected") \(highlightedRowIDs.count) highlighted rows (\(artistsTouched) artists, \(albumsTouched) albums, \(tracksTouched) tracks)")
     }

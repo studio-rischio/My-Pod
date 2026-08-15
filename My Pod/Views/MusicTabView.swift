@@ -140,7 +140,7 @@ struct MusicTabView: View {
                 .font(.headline)
 
             Toggle("Select new music automatically", isOn: $store.autoSelectNewMusic)
-                .help("Check new albums as they appear — newest first, for as long as the iPod has room.")
+                .help("Check new albums as they appear — newest first, for as long as the iPod has room. Anything you check or uncheck yourself is left alone.")
                 .disabled(store.selectionIsLocked)
 
             if store.deviceSnapshot == nil {
