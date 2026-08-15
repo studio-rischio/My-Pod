@@ -23,6 +23,7 @@ struct My_PodApp: App {
     @State private var controller = IPodController()
     @State private var libraryStore = MusicLibraryStore()
     @State private var playlistStore = PlaylistStore()
+    @State private var manualStore = ManualTransferStore()
     @State private var syncEngine = SyncEngine()
 
     init() {
@@ -35,6 +36,7 @@ struct My_PodApp: App {
                 controller: controller,
                 libraryStore: libraryStore,
                 playlistStore: playlistStore,
+                manualStore: manualStore,
                 syncEngine: syncEngine
             )
         }
