@@ -10,10 +10,12 @@ Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI in
 
 - **Automatic device detection** — the iPod is picked up as soon as it mounts; no pairing or setup.
 - **Library mirroring** — pick a Plex-structured folder (`Root/Artist/Album/Track`) and either sync all of it or check the artists, albums and tracks you want. Sync is a two-way mirror: checked music is added, unchecked music is removed.
-- **New-music highlighting** — anything in your library that isn't on the iPod is marked with a dot, rolled up onto album and artist rows, and counted in the toolbar. Optionally it's checked for you automatically, newest albums first, for as long as the device has room.
-- **Transcoding** — FLAC, OGG, Opus, WMA and APE are converted to AAC 256 kbps `.m4a` via `afconvert`, cached in a hidden `.mypod/` folder beside the source so a given file is only ever encoded once. Files that are *already* AAC or ALAC get checked rather than trusted: hi-res, 24-bit and HE-AAC ones are re-encoded too, since a click-wheel iPod skips or muffles them.
+- **New-music highlighting** — anything in your library that isn't on the iPod is marked with a dot, rolled up onto album and artist rows, and counted in the toolbar.
+- **Selection details** — click an artist, album or track and the panel beside the library tells you what it is: cover art, formats, sizes on disk and on the iPod, what's been converted, and what's already on the device. Shift-click to roll several together.
+- **Transcoding** — FLAC, OGG, Opus, WMA and APE are converted to AAC 256 kbps `.m4a` via `afconvert` and cached, so a given file is only ever encoded once. The cache lives outside your music library by default; Settings ▸ Cache can put it back beside the music, shows what it's using, and clears it. Files that are *already* AAC or ALAC get checked rather than trusted: hi-res, 24-bit and HE-AAC ones are re-encoded too, since a click-wheel iPod skips or muffles them.
 - **Cover art** — artwork is located per album and written into the iPod's database as rendered thumbnails.
 - **Playlists** — read from a folder of plain `.m3u` files. Checking a playlist syncs the tracks it contains, so you can put music on the iPod by playlist alone.
+- **Capacity checking** — the storage bar previews what a sync will add and free before you run it, and a sync that wouldn't fit is refused with the shortfall named rather than failing partway through.
 - **Dock progress** — sync progress is drawn onto the app icon, so you can start a sync and switch away.
 
 ### Browsing and selecting music
@@ -143,6 +145,8 @@ Swift talks to libgpod through `IPodKit/ipod-api.c`, a small C wrapper that keep
 **Matching.** The iPod's database doesn't store source file paths, so library tracks are matched to device tracks on `(artist, album, title)`, Unicode-normalised so accented titles compare equal across the filesystem and the database.
 
 **Transcoding.** Formats the iPod can't play are encoded with `afconvert` to AAC-LC 256 kbps, constrained VBR, forced to 44.1 kHz. Those specifics matter on older hardware: true VBR breaks seeking on an iPod Photo, and hi-res sources passed through at 48 or 96 kHz skip during playback. The conversion cache is versioned, so changing the encoder settings invalidates it automatically.
+
+**Where converted files go.** By default `~/Library/Application Support/My Pod`, so your music folders are never written to — which matters if your library is read-only, on a network share, or synced by something like Dropbox. Settings ▸ Cache can instead keep each conversion in a hidden `.mypod/` folder beside its source, which means the cache survives moving or renaming your library, at the cost of writing into it. Either way the same tab reports what each location is using and can empty it.
 
 **What counts as playable.** A file extension isn't proof — `.m4a` covers both 256 kbps AAC and 24-bit/96 kHz ALAC, and only one of those plays properly. Natively wrapped files are opened and inspected, and re-encoded when their contents are out of spec: above 44.1 kHz, lossless above 16-bit, or any HE-AAC. HE-AAC has to be read out of the codec layer list, because such a file reports itself as an ordinary half-rate AAC stream and would otherwise slip through and play back muffled. MP3s are exempt from the check, since the format can't exceed what the hardware handles.
 
