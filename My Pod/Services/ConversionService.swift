@@ -14,8 +14,9 @@ enum ConversionError: LocalizedError {
 
 /// Transcodes non-iPod-playable formats (FLAC, OGG, etc.) into AAC at
 /// ~256 kbps inside an `.m4a` container by shelling out to macOS's bundled
-/// `/usr/bin/afconvert`. Output lives in a hidden `.mypod/` folder inside the
-/// source album directory.
+/// `/usr/bin/afconvert`. Output goes wherever `CacheLocation` says — by default
+/// `~/Library/Application Support/My Pod/Converted`, or a hidden `.mypod/`
+/// folder inside the source album directory.
 ///
 /// We previously tried AVAssetReader → AVAssetWriter for this so we could
 /// embed metadata + artwork into the m4a directly. The result wouldn't play
@@ -56,16 +57,18 @@ nonisolated struct ConversionService: Sendable {
     /// Defaults to 2 — afconvert spawns one CoreAudio decode/encode pipeline
     /// per process and that pipeline doesn't tolerate >~4 concurrent instances
     /// in some configurations. AAC encoding is fast (~30× realtime per stream).
-    init(maxConcurrent: Int = 2) {
+    init(maxConcurrent: Int = 2, cacheLocation: CacheLocation = .current) {
         self.maxConcurrent = max(1, maxConcurrent)
+        self.cacheLocation = cacheLocation
     }
+
+    /// Where the user has chosen to keep converted files. Captured at init so
+    /// a single sync run can't straddle a location change mid-flight.
+    let cacheLocation: CacheLocation
 
     nonisolated func iPodPlayableURL(for track: LibraryTrack) -> URL {
         guard track.needsConversion else { return track.url }
-        let cacheDir = track.url.deletingLastPathComponent()
-            .appendingPathComponent(".mypod", isDirectory: true)
-        let basename = track.url.deletingPathExtension().lastPathComponent
-        return cacheDir.appendingPathComponent("\(basename).m4a")
+        return cacheLocation.url(forSource: track.url)
     }
 
     /// Bytes this track will actually occupy on the iPod.
@@ -120,7 +123,9 @@ nonisolated struct ConversionService: Sendable {
     }
 
     nonisolated private func cacheVersionMatches(target: URL) -> Bool {
-        let marker = target.deletingLastPathComponent().appendingPathComponent(".version")
+        // No marker means the version is already part of the path, so simply
+        // finding a file there proves it was written by this version.
+        guard let marker = cacheLocation.versionMarker(forTarget: target) else { return true }
         guard let data = try? Data(contentsOf: marker),
               let s = String(data: data, encoding: .utf8) else {
             return false
@@ -138,8 +143,7 @@ nonisolated struct ConversionService: Sendable {
             return target
         }
 
-        let cacheDir = target.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        try cacheLocation.createDirectory(for: target)
         let started = Date()
         Log.convert.debug("convert started\(force ? " (forced)" : ""): \(track.url.lastPathComponent)")
         do {
@@ -148,8 +152,9 @@ nonisolated struct ConversionService: Sendable {
             Log.convert.error("convert failed: \(track.url.lastPathComponent) — \(error.localizedDescription)")
             throw error
         }
-        let marker = cacheDir.appendingPathComponent(".version")
-        try? Self.cacheVersion.data(using: .utf8)?.write(to: marker, options: [.atomic])
+        if let marker = cacheLocation.versionMarker(forTarget: target) {
+            try? Self.cacheVersion.data(using: .utf8)?.write(to: marker, options: [.atomic])
+        }
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         Log.convert.info("convert ok: \(track.url.lastPathComponent) (\(ms) ms)")
         return target

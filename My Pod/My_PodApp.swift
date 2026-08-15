@@ -50,6 +50,12 @@ struct My_PodApp: App {
             }
         }
 
+        // Settings scene. SwiftUI puts this behind Cmd-, and adds the
+        // Settings… item to the app menu on its own.
+        Settings {
+            SettingsView()
+        }
+
         // About window — opened by the About menu item above.
         Window("About \(appName)", id: "about") {
             AboutView()
