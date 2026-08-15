@@ -126,42 +126,11 @@ struct MusicTabView: View {
 
             Divider()
 
-            newMusicSection
+            SelectionInspectorView(store: store)
 
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(16)
-    }
-
-    @ViewBuilder
-    private var newMusicSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("New Music")
-                .font(.headline)
-
-            Toggle("Select new music automatically", isOn: $store.autoSelectNewMusic)
-                .help("Check new albums as they appear — newest first, for as long as the iPod has room. Anything you check or uncheck yourself is left alone.")
-                .disabled(store.selectionIsLocked)
-
-            if store.deviceSnapshot == nil {
-                Text("Connect your iPod to see what's new.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if store.newTrackCount == 0 {
-                Text("Everything in your library is on the iPod.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack {
-                    Text("Not on iPod:")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(store.newTrackCount) tracks in \(store.newAlbumIDs.count) albums")
-                        .monospacedDigit()
-                        .font(.callout)
-                }
-            }
-        }
     }
 
     private func pickRoot() {

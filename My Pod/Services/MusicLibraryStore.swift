@@ -91,6 +91,10 @@ final class MusicLibraryStore {
     @ObservationIgnored private var estimateCache: [String: UInt64] = [:]
     @ObservationIgnored private let conversionForEstimates = ConversionService()
 
+    /// Path → track, rebuilt at scan time so the inspector can resolve a
+    /// highlighted row without walking the whole library on every redraw.
+    @ObservationIgnored private var tracksByPath: [String: LibraryTrack] = [:]
+
     /// Playlist-resolved paths exactly as the playlist store handed them over,
     /// kept so a rescan can re-resolve them against the new library without
     /// asking for them again.
@@ -144,31 +148,9 @@ final class MusicLibraryStore {
 
     var newTrackCount: Int { newTrackPaths.count }
 
-    /// Tracks auto-selection has already checked for the user. Without this,
-    /// every device refresh would re-check an album they'd deliberately
-    /// unchecked — the album is still "new" (still not on the iPod), so it
-    /// would keep qualifying. The offer is made once per track, not once per
-    /// refresh. Tracks skipped for lack of space are deliberately *not*
-    /// recorded, so they get another chance when room frees up.
-    private(set) var autoOfferedPaths: Set<String> = []
-
-    /// When on, new albums are checked for you as they appear, newest first,
-    /// for as long as the device has room. Opt-out lives in the Music tab's
-    /// Sync Selection panel.
-    var autoSelectNewMusic: Bool {
-        didSet {
-            guard autoSelectNewMusic != oldValue else { return }
-            defaults.set(autoSelectNewMusic, forKey: autoSelectKey)
-            Log.library.info("auto-select new music: \(self.autoSelectNewMusic ? "on" : "off")")
-            if autoSelectNewMusic { runAutoSelection() }
-        }
-    }
-
     private let defaults = UserDefaults.standard
     private let rootKey = "MyPod.libraryRoot"
     private let selectionKey = "MyPod.selectedTracks"
-    private let autoSelectKey = "MyPod.autoSelectNewMusic"
-    private let autoOfferedKey = "MyPod.autoOfferedTracks"
     private let syncModeKey = "MyPod.syncMode"
 
     init() {
@@ -177,12 +159,6 @@ final class MusicLibraryStore {
         // widen every upgrader's next sync to their whole library.
         self.syncMode = UserDefaults.standard.string(forKey: "MyPod.syncMode")
             .flatMap(SyncMode.init(rawValue:)) ?? .selected
-        // Defaults to on for a fresh install — `object(forKey:)` distinguishes
-        // "never set" from an explicit false, which `bool(forKey:)` can't.
-        self.autoSelectNewMusic = defaults.object(forKey: autoSelectKey) as? Bool ?? true
-        if let stored = defaults.array(forKey: autoOfferedKey) as? [String] {
-            self.autoOfferedPaths = Set(stored)
-        }
         if let path = defaults.string(forKey: rootKey) {
             let url = URL(fileURLWithPath: path)
             if FileManager.default.fileExists(atPath: url.path) {
@@ -196,6 +172,17 @@ final class MusicLibraryStore {
         // nothing until the scan lands and recomputes — which is correct: there
         // is no library yet to select all of.
         recomputeEffectiveSelection()
+        // Moving or clearing the cache changes which tracks count as converted,
+        // which changes both the pre-convert counts and the storage bar's
+        // estimates. Settings is a separate scene with no reference to this
+        // store, so the signal comes through NotificationCenter.
+        NotificationCenter.default.addObserver(
+            forName: CacheLocation.didChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cacheLayoutChanged() }
+        }
         if libraryRoot != nil {
             rescan()
         }
@@ -233,7 +220,6 @@ final class MusicLibraryStore {
             self.pruneSelection(against: lib)
             Log.library.info("scan finished: \(lib.artists.count) artists, \(lib.totalTracks) tracks")
             self.recomputeNewMusic()
-            self.runAutoSelection()
         }
     }
 
@@ -255,6 +241,13 @@ final class MusicLibraryStore {
         let value = conversionForEstimates.estimatedIPodBytes(for: track)
         estimateCache[path] = value
         return value
+    }
+
+    /// The converted-file cache moved or was emptied.
+    private func cacheLayoutChanged() {
+        estimateCache.removeAll(keepingCapacity: true)
+        recomputePending()
+        Log.library.info("cache layout changed — size estimates recomputed")
     }
 
     private func recomputePending() {
@@ -369,32 +362,8 @@ final class MusicLibraryStore {
 
     // MARK: - Selection
 
-    /// Record that the user decided this by hand, so auto-selection won't
-    /// revisit it.
-    ///
-    /// Without this, unchecking an album that's already on the iPod starts a
-    /// loop: the sync removes it, removal makes it "not on the iPod", "not on
-    /// the iPod" is the definition of new, and auto-selection checks it again on
-    /// the next device refresh. The user unchecks it once and the app puts it
-    /// back — every time.
-    ///
-    /// Applied in both directions, matching `PlaylistStore.setSelected`. Marking
-    /// only on uncheck would leave a track the user checked by hand unprotected
-    /// the first time they later uncheck it.
-    ///
-    /// Note this is the *manual* counterpart to the insert inside
-    /// `runAutoSelection`, and deliberately unlike the skipped-for-space case
-    /// there, which stays unrecorded so it gets another chance when room frees.
-    private func recordManualTouch(_ paths: some Sequence<String>) {
-        let before = autoOfferedPaths.count
-        autoOfferedPaths.formUnion(paths)
-        guard autoOfferedPaths.count != before else { return }
-        persistAutoOffered()
-    }
-
     func toggleTrack(_ track: LibraryTrack) {
         let key = track.url.path
-        recordManualTouch([key])
         let willBeOn: Bool
         if selectedTrackPaths.contains(key) {
             selectedTrackPaths.remove(key)
@@ -414,7 +383,6 @@ final class MusicLibraryStore {
         } else {
             for t in album.tracks { selectedTrackPaths.remove(t.url.path) }
         }
-        recordManualTouch(album.tracks.map(\.url.path))
         selectionDidChange()
         let delta = selected ? (album.tracks.count - before) : before
         Log.library.info("album \(selected ? "selected" : "deselected"): \(album.artist) — \(album.name) (\(delta) of \(album.tracks.count) tracks changed)")
@@ -422,16 +390,13 @@ final class MusicLibraryStore {
 
     func setArtistSelected(_ artist: LibraryArtist, _ selected: Bool) {
         var totalTracks = 0
-        var touched: [String] = []
         for album in artist.albums {
             for t in album.tracks {
                 let key = t.url.path
                 if selected { selectedTrackPaths.insert(key) } else { selectedTrackPaths.remove(key) }
-                touched.append(key)
                 totalTracks += 1
             }
         }
-        recordManualTouch(touched)
         selectionDidChange()
         Log.library.info("artist \(selected ? "selected" : "deselected"): \(artist.name) (\(totalTracks) tracks)")
     }
@@ -444,7 +409,6 @@ final class MusicLibraryStore {
             }
         }
         selectedTrackPaths = s
-        recordManualTouch(s)
         selectionDidChange()
         Log.library.info("select all: \(s.count) tracks")
     }
@@ -452,9 +416,6 @@ final class MusicLibraryStore {
     func clearSelection() {
         let prev = selectedTrackPaths.count
         selectedTrackPaths.removeAll()
-        // Clearing is a statement about the whole library, so the whole library
-        // counts as decided — otherwise auto-selection refills it immediately.
-        recordManualTouch(allLibraryPaths)
         selectionDidChange()
         Log.library.info("clear selection (was \(prev) tracks)")
     }
@@ -505,6 +466,46 @@ final class MusicLibraryStore {
         highlightAnchor = nil
     }
 
+    /// What the highlighted rows actually are.
+    ///
+    /// Highlight is a separate axis from the checkboxes: it's what the user
+    /// clicked, not what will sync. The inspector reads this; nothing about a
+    /// sync does.
+    enum HighlightedItem: Sendable {
+        case artist(LibraryArtist)
+        case album(LibraryAlbum)
+        case track(LibraryTrack)
+    }
+
+    var highlightedItems: [HighlightedItem] {
+        guard !highlightedRowIDs.isEmpty else { return [] }
+        var byArtist: [String: LibraryArtist] = [:]
+        byArtist.reserveCapacity(library.artists.count)
+        for artist in library.artists { byArtist[artist.name] = artist }
+
+        var out: [HighlightedItem] = []
+        // Sorted so a multi-row summary is stable between redraws — the
+        // underlying set has no order.
+        for rowID in highlightedRowIDs.sorted() {
+            if rowID.hasPrefix("artist:") {
+                let name = String(rowID.dropFirst("artist:".count))
+                if let artist = byArtist[name] { out.append(.artist(artist)) }
+            } else if rowID.hasPrefix("album:") {
+                let key = String(rowID.dropFirst("album:".count))
+                guard let slash = key.firstIndex(of: "/") else { continue }
+                let artistName = String(key[..<slash])
+                let albumName = String(key[key.index(after: slash)...])
+                if let album = byArtist[artistName]?.albums.first(where: { $0.name == albumName }) {
+                    out.append(.album(album))
+                }
+            } else if rowID.hasPrefix("track:") {
+                let path = String(rowID.dropFirst("track:".count))
+                if let track = tracksByPath[path] { out.append(.track(track)) }
+            }
+        }
+        return out
+    }
+
     /// Apply `selected` (true → check, false → uncheck) to every highlighted
     /// row, fanning out to artist/album/track-level selection as appropriate.
     /// Used when the user clicks a checkbox on a row that's part of a
@@ -512,7 +513,6 @@ final class MusicLibraryStore {
     func applyToHighlights(_ selected: Bool) {
         guard !highlightedRowIDs.isEmpty else { return }
         var artistsTouched = 0, albumsTouched = 0, tracksTouched = 0
-        var touched: [String] = []
         for rowID in highlightedRowIDs {
             if rowID.hasPrefix("artist:") {
                 let name = String(rowID.dropFirst("artist:".count))
@@ -521,7 +521,6 @@ final class MusicLibraryStore {
                     for t in album.tracks {
                         if selected { selectedTrackPaths.insert(t.url.path) }
                         else { selectedTrackPaths.remove(t.url.path) }
-                        touched.append(t.url.path)
                     }
                 }
                 artistsTouched += 1
@@ -535,18 +534,15 @@ final class MusicLibraryStore {
                 for t in album.tracks {
                     if selected { selectedTrackPaths.insert(t.url.path) }
                     else { selectedTrackPaths.remove(t.url.path) }
-                    touched.append(t.url.path)
                 }
                 albumsTouched += 1
             } else if rowID.hasPrefix("track:") {
                 let path = String(rowID.dropFirst("track:".count))
                 if selected { selectedTrackPaths.insert(path) }
                 else { selectedTrackPaths.remove(path) }
-                touched.append(path)
                 tracksTouched += 1
             }
         }
-        recordManualTouch(touched)
         selectionDidChange()
         Log.library.info("bulk \(selected ? "selected" : "deselected") \(highlightedRowIDs.count) highlighted rows (\(artistsTouched) artists, \(albumsTouched) albums, \(tracksTouched) tracks)")
     }
@@ -714,7 +710,6 @@ final class MusicLibraryStore {
         guard snapshot != deviceSnapshot else { return }
         deviceSnapshot = snapshot
         recomputeNewMusic()
-        runAutoSelection()
     }
 
     private func recomputeNewMusic() {
@@ -743,76 +738,6 @@ final class MusicLibraryStore {
         Log.library.info("new music: \(paths.count) tracks across \(albumIDs.count) albums")
     }
 
-    /// Check new music that fits, newest album folder first.
-    ///
-    /// The unit is "the new tracks of one album", all-or-nothing: an album
-    /// that doesn't fit is skipped and we carry on down the list, so a smaller
-    /// album further along can still get in. Tracks already on the iPod are
-    /// left exactly as the user left them — if they've unchecked something,
-    /// re-checking it here would fight them.
-    private func runAutoSelection() {
-        // Nothing to auto-select when everything is already going.
-        guard syncMode == .selected,
-              autoSelectNewMusic,
-              let snapshot = deviceSnapshot,
-              !newTrackPaths.isEmpty else { return }
-
-        let conversion = ConversionService()
-        let selected = selectedLibraryTracks
-        var budget = Int64(bitPattern: snapshot.freeBytes)
-
-        // Space the next sync hands back: iPod tracks no longer checked get
-        // removed, so their bytes are available to us.
-        let selectedKeys = Set(selected.map { TrackKey(library: $0) })
-        for (key, bytes) in snapshot.bytesByTrackKey where !selectedKeys.contains(key) {
-            budget += Int64(bitPattern: bytes)
-        }
-        // Space already spoken for: checked tracks that haven't synced yet.
-        for track in selected where snapshot.bytesByTrackKey[TrackKey(library: track)] == nil {
-            budget -= Int64(bitPattern: conversion.estimatedIPodBytes(for: track))
-        }
-
-        // Newest folder first, so recent additions win the space on a device
-        // that can't hold everything. ID breaks date ties so runs are stable.
-        let candidateAlbums = library.artists
-            .flatMap(\.albums)
-            .filter { newAlbumIDs.contains($0.id) }
-            .sorted {
-                $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt
-            }
-
-        var chosenAlbums = 0, chosenTracks = 0, skippedAlbums = 0
-        for album in candidateAlbums {
-            let candidates = album.tracks.filter {
-                newTrackPaths.contains($0.url.path)
-                    && !selectedTrackPaths.contains($0.url.path)
-                    && !autoOfferedPaths.contains($0.url.path)
-            }
-            guard !candidates.isEmpty else { continue }
-            let cost = candidates.reduce(Int64(0)) {
-                $0 + Int64(bitPattern: conversion.estimatedIPodBytes(for: $1))
-            }
-            guard cost <= budget else {
-                skippedAlbums += 1
-                continue
-            }
-            for t in candidates {
-                selectedTrackPaths.insert(t.url.path)
-                autoOfferedPaths.insert(t.url.path)
-            }
-            budget -= cost
-            chosenAlbums += 1
-            chosenTracks += candidates.count
-        }
-
-        guard chosenTracks > 0 || skippedAlbums > 0 else { return }
-        if chosenTracks > 0 {
-            selectionDidChange()
-            persistAutoOffered()
-        }
-        Log.library.info("auto-selected \(chosenTracks) new tracks in \(chosenAlbums) albums; \(skippedAlbums) albums didn't fit (\(budget) bytes left)")
-    }
-
     // MARK: - Persistence
 
     /// Every mutation of `selectedTrackPaths` funnels through here, which is
@@ -823,10 +748,6 @@ final class MusicLibraryStore {
         recomputeEffectiveSelection()
     }
 
-    private func persistAutoOffered() {
-        defaults.set(Array(autoOfferedPaths), forKey: autoOfferedKey)
-    }
-
     private func pruneSelection(against lib: MusicLibrary) {
         let allPaths: Set<String> = Set(
             lib.artists.flatMap { $0.albums.flatMap { $0.tracks.map { $0.url.path } } }
@@ -834,6 +755,10 @@ final class MusicLibraryStore {
         // Cache before anything downstream reads it: `.entireLibrary` resolves
         // straight to this set, and playlist paths are canonicalized against it.
         allLibraryPaths = allPaths
+        tracksByPath = Dictionary(
+            lib.artists.lazy.flatMap { $0.albums }.flatMap { $0.tracks }.map { ($0.url.path, $0) },
+            uniquingKeysWith: { a, _ in a }
+        )
         // A file may have been re-encoded or replaced since the last scan.
         estimateCache.removeAll(keepingCapacity: true)
         selectedTrackPaths.formIntersection(allPaths)
@@ -842,11 +767,6 @@ final class MusicLibraryStore {
         // back — and intersection alone would leave it dropped forever.
         resolvePlaylistPaths()
         selectionDidChange()
-        // Keep the offered set from growing forever as files come and go. A
-        // track that leaves the library and later returns gets offered again,
-        // which is the right call — it's new to the iPod all over again.
-        autoOfferedPaths.formIntersection(allPaths)
-        persistAutoOffered()
         // Highlight set may reference rows that no longer exist after a
         // rescan — drop the whole thing rather than try to repair it.
         clearHighlight()

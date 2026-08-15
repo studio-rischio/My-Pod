@@ -118,9 +118,8 @@ nonisolated struct LibraryAlbum: Sendable, Identifiable, Hashable {
     let artist: String
     let name: String
     let directory: URL
-    /// Creation date of the album folder. Drives "newest first" ordering when
-    /// auto-selecting new music, so recent additions win the space on a device
-    /// that can't hold the whole library. `.distantPast` if unreadable.
+    /// Creation date of the album folder, or `.distantPast` if unreadable.
+    /// Read by the scanner for anything that wants to order by recency.
     let createdAt: Date
     var tracks: [LibraryTrack]
 
