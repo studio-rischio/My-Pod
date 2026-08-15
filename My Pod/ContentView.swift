@@ -12,6 +12,7 @@ struct ContentView: View {
     let controller: IPodController
     let libraryStore: MusicLibraryStore
     let playlistStore: PlaylistStore
+    let manualStore: ManualTransferStore
     let syncEngine: SyncEngine
 
     @State private var showSyncSheet = false
@@ -34,7 +35,8 @@ struct ContentView: View {
             MainTabView(
                 controller: controller,
                 libraryStore: libraryStore,
-                playlistStore: playlistStore
+                playlistStore: playlistStore,
+                manualStore: manualStore
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             StorageBarView(
@@ -52,6 +54,7 @@ struct ContentView: View {
         .onChange(of: controller.snapshot, initial: true) { _, snapshot in
             libraryStore.applyDeviceSnapshot(snapshot)
             playlistStore.applyDeviceSnapshot(snapshot)
+            Task { await manualStore.refresh(device: controller.device) }
         }
         // Which iPod is attached decides whose settings and selection are in
         // force. Two hops rather than one: the controller reports the device,
@@ -156,6 +159,7 @@ struct ContentView: View {
         controller: IPodController(),
         libraryStore: MusicLibraryStore(),
         playlistStore: PlaylistStore(),
+        manualStore: ManualTransferStore(),
         syncEngine: SyncEngine()
     )
 }
