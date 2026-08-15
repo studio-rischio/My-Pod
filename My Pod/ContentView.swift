@@ -24,6 +24,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             StorageBarView(
                 breakdown: controller.storage,
+                pending: libraryStore.pending,
                 canSync: canSync,
                 onSync: startSync
             )
@@ -95,7 +96,8 @@ struct ContentView: View {
                 library: libraryStore.library,
                 selectedPaths: libraryStore.effectiveSelectedPaths,
                 playlists: playlistsToSync,
-                device: device
+                device: device,
+                freeBytes: controller.storage.free
             )
         }
     }

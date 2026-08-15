@@ -66,6 +66,31 @@ final class MusicLibraryStore {
     /// `.entireLibrary` mode and playlist path resolution both need it.
     @ObservationIgnored private var allLibraryPaths: Set<String> = []
 
+    /// What the pending sync would add to and free from the device, estimated
+    /// live from the current selection. Drives the storage bar's preview.
+    ///
+    /// Deliberately the same arithmetic `SyncEngine.computePlan` does, so the
+    /// bar and the sync sheet can't disagree: a selected track the device
+    /// doesn't hold is an addition, a track the device holds that isn't
+    /// selected is a removal.
+    struct PendingBytes: Equatable {
+        var adding: UInt64 = 0
+        var removing: UInt64 = 0
+        var isEmpty: Bool { adding == 0 && removing == 0 }
+    }
+    private(set) var pending = PendingBytes()
+
+    /// Memo for `estimatedIPodBytes`, which stats the cached `.m4a` for anything
+    /// already converted. Without this, every checkbox click would re-stat every
+    /// selected track.
+    ///
+    /// Cleared whenever a cached file might have appeared or changed: after a
+    /// rescan, and after a pre-conversion run. The second matters more than it
+    /// looks — converting is exactly when a guessed size becomes a measurable
+    /// one, so a stale memo would pin the bar to its least accurate answer.
+    @ObservationIgnored private var estimateCache: [String: UInt64] = [:]
+    @ObservationIgnored private let conversionForEstimates = ConversionService()
+
     /// Playlist-resolved paths exactly as the playlist store handed them over,
     /// kept so a rescan can re-resolve them against the new library without
     /// asking for them again.
@@ -221,6 +246,40 @@ final class MusicLibraryStore {
         case .selected:
             effectiveSelectedPaths = selectedTrackPaths.union(playlistDerivedPaths)
         }
+        recomputePending()
+    }
+
+    private func estimatedBytes(for track: LibraryTrack) -> UInt64 {
+        let path = track.url.path
+        if let hit = estimateCache[path] { return hit }
+        let value = conversionForEstimates.estimatedIPodBytes(for: track)
+        estimateCache[path] = value
+        return value
+    }
+
+    private func recomputePending() {
+        guard let snapshot = deviceSnapshot else {
+            pending = PendingBytes()
+            return
+        }
+        var adding: UInt64 = 0
+        var selectedKeys: Set<TrackKey> = []
+        for artist in library.artists {
+            for album in artist.albums {
+                for t in album.tracks where effectiveSelectedPaths.contains(t.url.path) {
+                    let key = TrackKey(library: t)
+                    selectedKeys.insert(key)
+                    if snapshot.bytesByTrackKey[key] == nil {
+                        adding &+= estimatedBytes(for: t)
+                    }
+                }
+            }
+        }
+        var removing: UInt64 = 0
+        for (key, bytes) in snapshot.bytesByTrackKey where !selectedKeys.contains(key) {
+            removing &+= bytes
+        }
+        pending = PendingBytes(adding: adding, removing: removing)
     }
 
     /// Take the set of library paths that checked playlists require.
@@ -627,6 +686,12 @@ final class MusicLibraryStore {
             await MainActor.run { [weak self] in
                 self?.conversionTask = nil
                 self?.conversionState = .finished(succeeded: succeeded, failed: failed, cancelled: cancelled)
+                // Converted files now exist, so `estimatedIPodBytes` can measure
+                // them instead of guessing. Dropping the memo is what lets the
+                // storage bar tighten from an estimate to the real size — without
+                // it, pre-converting would leave the bar on its stalest guess.
+                self?.estimateCache.removeAll(keepingCapacity: true)
+                self?.recomputePending()
                 Log.convert.info("pre-convert \(cancelled ? "cancelled" : "finished"): \(succeeded) ok, \(failed) failed")
             }
         }
@@ -653,6 +718,7 @@ final class MusicLibraryStore {
     }
 
     private func recomputeNewMusic() {
+        defer { recomputePending() }
         guard let snapshot = deviceSnapshot else {
             newTrackPaths = []
             newAlbumIDs = []
@@ -768,6 +834,8 @@ final class MusicLibraryStore {
         // Cache before anything downstream reads it: `.entireLibrary` resolves
         // straight to this set, and playlist paths are canonicalized against it.
         allLibraryPaths = allPaths
+        // A file may have been re-encoded or replaced since the last scan.
+        estimateCache.removeAll(keepingCapacity: true)
         selectedTrackPaths.formIntersection(allPaths)
         // Re-resolve rather than intersect. A path that failed to match the old
         // library may match this one — a renamed folder, or a drive that came

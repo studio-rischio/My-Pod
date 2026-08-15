@@ -47,8 +47,25 @@ struct SyncPlan: Sendable, Equatable {
     var unchangedCount: Int
     /// Tracks needing conversion that aren't yet cached.
     var pendingConversion: [LibraryTrack]
+    /// Estimated bytes the additions will occupy *on the iPod*, so transcoded
+    /// tracks are counted at their delivered size rather than their source size.
     var addedBytes: UInt64
     var removedBytes: UInt64
+
+    /// Free space on the mounted volume when the plan was made. Zero when the
+    /// caller didn't supply it, which disables the capacity check rather than
+    /// failing every sync.
+    var freeBytesBefore: UInt64 = 0
+
+    /// Bytes this sync needs beyond what the device can give it, or zero if it
+    /// fits. Removals run before additions, so the space they free counts.
+    var shortfallBytes: UInt64 {
+        guard freeBytesBefore > 0 || removedBytes > 0 else { return 0 }
+        let available = freeBytesBefore &+ removedBytes
+        return addedBytes > available ? addedBytes &- available : 0
+    }
+
+    var fits: Bool { shortfallBytes == 0 }
     var playlistCount: Int
     /// Per-playlist diff against what's on the iPod now, sorted added →
     /// removed → modified → unchanged.

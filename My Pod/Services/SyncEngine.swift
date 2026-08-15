@@ -52,7 +52,8 @@ final class SyncEngine {
         library: MusicLibrary,
         selectedPaths: Set<String>,
         playlists: [Playlist],
-        device: IPodDevice
+        device: IPodDevice,
+        freeBytes: UInt64
     ) async {
         Log.sync.info("plan started: \(selectedPaths.count) selected, \(playlists.count) playlists")
         state = .planning
@@ -73,8 +74,17 @@ final class SyncEngine {
             playlists: playlists,
             iPodTracks: iPodTracks,
             devicePlaylists: devicePlaylists,
-            conversion: conversionService
+            conversion: conversionService,
+            freeBytes: freeBytes
         )
+
+        guard plan.fits else {
+            let short = Self.byteString(plan.shortfallBytes)
+            Log.sync.error("refusing to plan: needs \(short) more than the iPod has free")
+            state = .failed(Self.capacityRefusal(plan))
+            return
+        }
+
         Log.sync.info("plan: +\(plan.toAddCount) -\(plan.toRemoveCount), \(plan.unchangedCount) unchanged, \(plan.pendingConversion.count) need convert")
         Log.playlist.info("plan: playlists +\(plan.playlists(.added).count) -\(plan.playlists(.removed).count) ~\(plan.playlists(.modified).count), \(plan.playlists(.unchanged).count) unchanged")
         state = .planned(plan)
@@ -110,6 +120,27 @@ final class SyncEngine {
             """
     }
 
+    /// Why a sync won't fit, phrased the way iTunes phrased it — naming the
+    /// shortfall, not just the fact. "It doesn't fit" leaves you guessing how
+    /// much to uncheck.
+    static func capacityRefusal(_ plan: SyncPlan) -> String {
+        let freed = plan.removedBytes > 0
+            ? " After removing \(byteString(plan.removedBytes)) it would have \(byteString(plan.freeBytesBefore &+ plan.removedBytes))."
+            : ""
+        return """
+            This sync needs \(byteString(plan.shortfallBytes)) more space than the iPod has.
+
+            It would add \(byteString(plan.addedBytes)) to a device with \(byteString(plan.freeBytesBefore)) free.\(freed)
+
+            Uncheck some music and try again — the storage bar at the bottom of \
+            the window shows what fits as you go.
+            """
+    }
+
+    static func byteString(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .file)
+    }
+
     static func computePlan(
         libraryRoot: URL,
         library: MusicLibrary,
@@ -117,7 +148,8 @@ final class SyncEngine {
         playlists: [Playlist],
         iPodTracks: [TrackInfo],
         devicePlaylists: [DevicePlaylist],
-        conversion: ConversionService
+        conversion: ConversionService,
+        freeBytes: UInt64 = 0
     ) -> SyncPlan {
         // 1. path → LibraryTrack lookup. Keyed by `.path` to dodge URL
         // canonicalization differences between scan and persistence.
@@ -176,7 +208,11 @@ final class SyncEngine {
             .map(\.library)
 
         // 6. Sizes.
-        let addedBytes: UInt64 = toAdd.reduce(0) { $0 &+ $1.library.sizeBytes }
+        // `estimatedIPodBytes`, not `sizeBytes`: the source is what's on disk,
+        // and for anything transcoded that's 2–3× what actually lands on the
+        // device. Removals are already right — `TrackInfo.sizeBytes` is the
+        // iPod's own record of the file it holds.
+        let addedBytes: UInt64 = toAdd.reduce(0) { $0 &+ conversion.estimatedIPodBytes(for: $1.library) }
         let removedBytes: UInt64 = toRemove.reduce(0) { $0 &+ UInt64($1.sizeBytes) }
 
         // 7. Playlist diff. The post-sync device holds exactly `plannedKeys`,
@@ -195,6 +231,7 @@ final class SyncEngine {
             pendingConversion: pendingConversion,
             addedBytes: addedBytes,
             removedBytes: removedBytes,
+            freeBytesBefore: freeBytes,
             playlistCount: playlists.count,
             playlistChanges: playlistChanges
         )
