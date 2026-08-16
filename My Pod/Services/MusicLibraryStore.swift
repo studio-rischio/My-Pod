@@ -89,7 +89,11 @@ final class MusicLibraryStore {
     /// looks — converting is exactly when a guessed size becomes a measurable
     /// one, so a stale memo would pin the bar to its least accurate answer.
     @ObservationIgnored private var estimateCache: [String: UInt64] = [:]
-    @ObservationIgnored private let conversionForEstimates = ConversionService()
+    /// Rebuilt, not just consulted, whenever the cache location or conversion
+    /// profile changes: the service captures both at init, so keeping one
+    /// instance for the app's lifetime would answer "is this cached?" against
+    /// wherever the cache used to be.
+    @ObservationIgnored private var conversionForEstimates = ConversionService()
 
     /// Path → track, rebuilt at scan time so the inspector can resolve a
     /// highlighted row without walking the whole library on every redraw.
@@ -183,6 +187,20 @@ final class MusicLibraryStore {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.cacheLayoutChanged() }
         }
+        // A profile change is the stronger signal of the two: which tracks need
+        // converting at all is decided during the scan and baked into
+        // `LibraryTrack.needsConversion`, so refreshing estimates isn't enough —
+        // the library has to be classified again from scratch.
+        NotificationCenter.default.addObserver(
+            forName: ConversionProfile.didChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.cacheLayoutChanged()
+                self?.rescan()
+            }
+        }
         if libraryRoot != nil {
             rescan()
         }
@@ -243,8 +261,9 @@ final class MusicLibraryStore {
         return value
     }
 
-    /// The converted-file cache moved or was emptied.
+    /// The converted-file cache moved, was emptied, or changed shape.
     private func cacheLayoutChanged() {
+        conversionForEstimates = ConversionService()
         estimateCache.removeAll(keepingCapacity: true)
         recomputePending()
         Log.library.info("cache layout changed — size estimates recomputed")

@@ -40,7 +40,15 @@ nonisolated struct ConversionService: Sendable {
     ///     produces files iPod firmware can't index for seeking. Also force
     ///     44.1 kHz output (`aac@44100`) — hi-res FLAC sources passing through
     ///     at 48/96 kHz were skipping on the iPod Photo.
+    ///     The 44.1 kHz forcing is now the default rather than absolute — see
+    ///     `ConversionProfile`. That isn't a version bump: output at 44.1 kHz is
+    ///     unchanged, and output at any other rate is kept under a separate
+    ///     cache path rather than overwriting it.
     static let cacheVersion = "9"
+
+    /// The rate everything targeted before `ConversionProfile` existed, and
+    /// still the fallback whenever a source's own rate is unknown.
+    static let defaultSampleRate = AudioFormat.maxSampleRate
 
     /// AAC encoder bit rate in bits/second.
     static let aacBitRate = 256_000
@@ -57,18 +65,36 @@ nonisolated struct ConversionService: Sendable {
     /// Defaults to 2 — afconvert spawns one CoreAudio decode/encode pipeline
     /// per process and that pipeline doesn't tolerate >~4 concurrent instances
     /// in some configurations. AAC encoding is fast (~30× realtime per stream).
-    init(maxConcurrent: Int = 2, cacheLocation: CacheLocation = .current) {
+    init(
+        maxConcurrent: Int = 2,
+        cacheLocation: CacheLocation = .current,
+        profile: ConversionProfile = .current
+    ) {
         self.maxConcurrent = max(1, maxConcurrent)
         self.cacheLocation = cacheLocation
+        self.profile = profile
     }
 
     /// Where the user has chosen to keep converted files. Captured at init so
     /// a single sync run can't straddle a location change mid-flight.
     let cacheLocation: CacheLocation
 
+    /// How tightly to re-encode. Captured at init for the same reason as
+    /// `cacheLocation` — a run that changed rate partway through would write
+    /// half its output to a cache path the other half never looks in.
+    let profile: ConversionProfile
+
+    /// The sample rate this track's conversion targets.
+    ///
+    /// Part of the cache path, so it has to be derived the same way every time
+    /// it's asked for rather than decided at encode time.
+    nonisolated func encodeRate(for track: LibraryTrack) -> Int {
+        profile.encodeRate(sourceRate: track.sampleRate)
+    }
+
     nonisolated func iPodPlayableURL(for track: LibraryTrack) -> URL {
         guard track.needsConversion else { return track.url }
-        return cacheLocation.url(forSource: track.url)
+        return cacheLocation.url(forSource: track.url, rate: encodeRate(for: track))
     }
 
     /// Bytes this track will actually occupy on the iPod.
@@ -118,14 +144,14 @@ nonisolated struct ConversionService: Sendable {
     nonisolated func isCached(_ track: LibraryTrack) -> Bool {
         guard track.needsConversion else { return true }
         let target = iPodPlayableURL(for: track)
-        guard cacheVersionMatches(target: target) else { return false }
+        guard cacheVersionMatches(target: target, rate: encodeRate(for: track)) else { return false }
         return isUpToDate(source: track.url, target: target)
     }
 
-    nonisolated private func cacheVersionMatches(target: URL) -> Bool {
+    nonisolated private func cacheVersionMatches(target: URL, rate: Int) -> Bool {
         // No marker means the version is already part of the path, so simply
         // finding a file there proves it was written by this version.
-        guard let marker = cacheLocation.versionMarker(forTarget: target) else { return true }
+        guard let marker = cacheLocation.versionMarker(forTarget: target, rate: rate) else { return true }
         guard let data = try? Data(contentsOf: marker),
               let s = String(data: data, encoding: .utf8) else {
             return false
@@ -136,8 +162,9 @@ nonisolated struct ConversionService: Sendable {
     nonisolated func convert(_ track: LibraryTrack, force: Bool = false) async throws -> URL {
         let target = iPodPlayableURL(for: track)
         guard track.needsConversion else { return track.url }
+        let rate = encodeRate(for: track)
         if !force,
-           cacheVersionMatches(target: target),
+           cacheVersionMatches(target: target, rate: rate),
            isUpToDate(source: track.url, target: target) {
             Log.convert.debug("cache hit: \(track.title)")
             return target
@@ -145,14 +172,14 @@ nonisolated struct ConversionService: Sendable {
 
         try cacheLocation.createDirectory(for: target)
         let started = Date()
-        Log.convert.debug("convert started\(force ? " (forced)" : ""): \(track.url.lastPathComponent)")
+        Log.convert.debug("convert started\(force ? " (forced)" : ""): \(track.url.lastPathComponent) @ \(rate) Hz")
         do {
-            try await export(source: track.url, to: target)
+            try await export(source: track.url, to: target, rate: rate)
         } catch {
             Log.convert.error("convert failed: \(track.url.lastPathComponent) — \(error.localizedDescription)")
             throw error
         }
-        if let marker = cacheLocation.versionMarker(forTarget: target) {
+        if let marker = cacheLocation.versionMarker(forTarget: target, rate: rate) {
             try? Self.cacheVersion.data(using: .utf8)?.write(to: marker, options: [.atomic])
         }
         let ms = Int(Date().timeIntervalSince(started) * 1000)
@@ -212,7 +239,7 @@ nonisolated struct ConversionService: Sendable {
         return targetMtime >= sourceMtime
     }
 
-    nonisolated private func export(source: URL, to target: URL) async throws {
+    nonisolated private func export(source: URL, to target: URL, rate: Int) async throws {
         let tmp = target.deletingLastPathComponent()
             .appendingPathComponent(".\(target.lastPathComponent).part")
         try? FileManager.default.removeItem(at: tmp)
@@ -222,7 +249,7 @@ nonisolated struct ConversionService: Sendable {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
         process.arguments = [
             "-f", "m4af",                      // m4a file format
-            "-d", "aac@44100",                 // AAC-LC, force 44.1 kHz (older iPods are flaky at 48k+)
+            "-d", "aac@\(rate)",               // AAC-LC at the profile's rate — 44.1 kHz unless the user opted up (older iPods are flaky at 48k+)
             "-b", String(Self.aacBitRate),     // bitrate (only honored under -s 2 / -s 0, not -s 3)
             "-q", "127",                       // highest quality
             "-s", "2",                         // constrained VBR — same mode iTunes uses; -s 3 (true VBR) breaks iPod seeking

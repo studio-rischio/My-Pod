@@ -3,11 +3,79 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            ConversionSettingsView()
+                .tabItem { Label("Conversion", systemImage: "waveform") }
             CacheSettingsView()
                 .tabItem { Label("Cache", systemImage: "internaldrive") }
         }
         .frame(width: 520)
         .scenePadding()
+    }
+}
+
+/// Picks how tightly music is re-encoded before it's synced.
+///
+/// The looser levels are a considered risk, not a hidden power feature, so the
+/// UI says which hardware each was verified on and what going wrong looks like.
+/// A user who can't tell whether their iPod is affected should be able to read
+/// this and conclude "leave it alone", which is why the default sits first and
+/// the warning is attached to the choice rather than buried in a help tag.
+private struct ConversionSettingsView: View {
+    @State private var profile: ConversionProfile = .current
+    /// What the profile was when this pane opened. Switching away and back
+    /// shouldn't keep claiming a rescan is coming.
+    @State private var initial: ConversionProfile = .current
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Audio quality limits")
+                    .font(.headline)
+
+                Text("Click-wheel iPods play a narrower range of audio than their specs suggest, and give no error when a file is out of range — the track just skips. My Pod re-encodes anything outside the range it trusts.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Picker("", selection: $profile) {
+                    ForEach(ConversionProfile.allCases) { option in
+                        Text("\(option.title) — \(option.summary)").tag(option)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+
+                Text(profile.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if profile != .maximumCompatibility {
+                Label(
+                    "If tracks start skipping or refusing to play, switch back to maximum compatibility and sync again. 96 and 192 kHz music is always re-encoded — those don't play on any click-wheel iPod.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            Label(
+                profile == initial
+                    ? "Changing this rescans your library and may change how much space a sync needs. Music already converted at another setting is kept, so switching back is instant."
+                    : "Your library is being rescanned. Music that no longer needs converting will sync from the original file on the next sync.",
+                systemImage: profile == initial ? "info.circle" : "arrow.clockwise"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+        .onChange(of: profile) { _, new in ConversionProfile.setCurrent(new) }
     }
 }
 

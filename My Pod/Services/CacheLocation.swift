@@ -79,24 +79,42 @@ nonisolated enum CacheLocation: String, CaseIterable, Sendable {
     /// looks current while still holding old output. Encoding the version in the
     /// path makes a bump a different location, so a stale file is unreachable
     /// rather than merely mislabelled.
-    private static var versionedRoot: URL {
-        appSupportRoot.appendingPathComponent("v\(ConversionService.cacheVersion)", isDirectory: true)
+    private static func versionedRoot(rate: Int) -> URL {
+        appSupportRoot.appendingPathComponent(
+            "v\(ConversionService.cacheVersion)\(suffix(forRate: rate))",
+            isDirectory: true
+        )
     }
 
-    /// Where this track's converted file belongs.
-    func url(forSource source: URL) -> URL {
+    /// Distinguishes output encoded at different sample rates.
+    ///
+    /// Keyed on the rate the encoder actually targeted, not on the conversion
+    /// profile, and empty at 44.1 kHz. Both details matter. Empty at 44.1 keeps
+    /// every file converted before this setting existed exactly where it was, so
+    /// upgrading re-encodes nothing. Keying on the rate rather than the profile
+    /// means a 44.1 kHz FLAC lands in the same place under every profile — its
+    /// output is byte-identical either way — so switching to "Allow 48 kHz" to
+    /// spare a handful of hi-res files doesn't re-transcode the whole library.
+    private static func suffix(forRate rate: Int) -> String {
+        rate == ConversionService.defaultSampleRate ? "" : "-\(rate / 1000)"
+    }
+
+    /// Where this track's converted file belongs, given the rate it'll be
+    /// encoded at.
+    func url(forSource source: URL, rate: Int) -> URL {
         switch self {
         case .besideMusic:
             let dir = source.deletingLastPathComponent()
                 .appendingPathComponent(".mypod", isDirectory: true)
-            return dir.appendingPathComponent("\(source.deletingPathExtension().lastPathComponent).m4a")
+            let base = source.deletingPathExtension().lastPathComponent
+            return dir.appendingPathComponent("\(base)\(Self.suffix(forRate: rate)).m4a")
 
         case .applicationSupport:
             let digest = SHA256.hash(data: Data(source.path.utf8))
             let hex = digest.map { String(format: "%02x", $0) }.joined()
             // Two-character fan-out so no single directory holds tens of
             // thousands of entries.
-            return Self.versionedRoot
+            return Self.versionedRoot(rate: rate)
                 .appendingPathComponent(String(hex.prefix(2)), isDirectory: true)
                 .appendingPathComponent("\(hex).m4a")
         }
@@ -104,10 +122,15 @@ nonisolated enum CacheLocation: String, CaseIterable, Sendable {
 
     /// The version marker for a converted file, or nil when the version is
     /// already encoded in the path and no marker is needed.
-    func versionMarker(forTarget target: URL) -> URL? {
+    ///
+    /// The rate is in the marker's *name* so a `.mypod` folder holding both
+    /// 44.1 and 48 kHz output doesn't have the two rates overwriting each
+    /// other's version stamp.
+    func versionMarker(forTarget target: URL, rate: Int) -> URL? {
         switch self {
         case .besideMusic:
-            target.deletingLastPathComponent().appendingPathComponent(".version")
+            target.deletingLastPathComponent()
+                .appendingPathComponent(".version\(Self.suffix(forRate: rate))")
         case .applicationSupport:
             nil
         }

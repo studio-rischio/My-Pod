@@ -140,19 +140,45 @@ cleanly. The original finding that motivated 44.1 kHz was *intermittent skipping
 album*, and a short clip playing correctly cannot disprove that. 24-bit lossless is likewise
 re-encoded even where it plays, because the output pipeline is 16-bit either way.
 
-**Do not relax these to recover quality.** Anyone wanting the device's full capability has Rockbox
-and other replacement firmware; this app's contract is that a sync always works. Relaxing a
-threshold requires evidence of the *absence* of failure across full-length material on multiple
+**Do not relax the defaults to recover quality.** Anyone wanting the device's full capability has
+Rockbox and other replacement firmware; this app's contract is that a sync always works. Relaxing a
+default requires evidence of the *absence* of failure across full-length material on multiple
 models — not the presence of success in a short test. Adding a threshold needs much less evidence
 than removing one.
 
+What *is* allowed is letting a user who knows their own hardware opt out per-install, which is what
+`ConversionProfile` does (Settings ▸ Conversion). Three levels, default first, each a superset of
+the last: 44.1 kHz/16-bit, then 48 kHz, then 48 kHz + 24-bit lossless. The looser two correspond to
+bench tests F and B in `agent_space/ipod-test-files/results.txt`, which passed on an iPod Photo.
+Two rules hold at every level, because they're not "probably fine" cases: **96 and 192 kHz are
+always converted** (tests C and D refused to play outright), and **HE-AAC is never passed through**
+(click-wheel decoders predate SBR, so the file plays audibly wrong rather than merely over-spec).
+The default must stay `.maximumCompatibility` — a user who can't tell whether their model is
+affected has to land on the safe behaviour without choosing it.
+
 ## Constraints that break real hardware if changed casually
 
-- **afconvert flags** (`ConversionService.export`): `-s 2` (constrained VBR, not `-s 3`), forced
-  `aac@44100`. True VBR breaks seeking on an iPod Photo; passing hi-res sources through at 48/96 kHz
-  causes playback skipping. Any change to encoder settings must bump
+- **afconvert flags** (`ConversionService.export`): `-s 2` (constrained VBR, not `-s 3`), and
+  `aac@<rate>` where the rate comes from `ConversionProfile.encodeRate(sourceRate:)` — 44100 unless
+  the user opted up. True VBR breaks seeking on an iPod Photo; passing hi-res sources through at
+  48/96 kHz causes playback skipping. Any change to encoder settings must bump
   `ConversionService.cacheVersion`, which invalidates every cached `.m4a` in the hidden `.mypod/`
   folders.
+- **Cached output is keyed by the rate it was encoded at**, not by the profile — `CacheLocation`
+  appends `-48` to the directory (`v9-48/`) or filename (`Track-48.m4a`) for anything that isn't
+  44.1 kHz, and appends nothing at 44.1. Both halves matter. No suffix at 44.1 means upgrading to a
+  build that has this setting strands nothing. Keying on rate rather than profile means a 44.1 kHz
+  source resolves to the same path under every profile — its output is byte-identical either way —
+  so switching profiles to spare a handful of hi-res files doesn't re-transcode the whole library.
+- **`encodeRate` never resamples upward and prefers halving to clamping**: 96 → 48 and 88.2 → 44.1
+  are exact 2:1 decimations where 88.2 → 48 would not be. `agent_space/crackle-test` measured
+  intersample overshoot nearly tripling through a rate conversion, so staying inside a rate family
+  is worth the extra branch. An unknown source rate (0) falls back to 44.1, never upward.
+- **Changing the profile requires a rescan, not just a refresh.** `needsConversion` is decided at
+  scan time and baked into `LibraryTrack`, so `MusicLibraryStore` rescans on
+  `ConversionProfile.didChange`. It also rebuilds `conversionForEstimates` — `ConversionService`
+  captures the location and profile at init, so a long-lived instance answers "is this cached?"
+  against wherever the cache used to be.
 - **Conversion is decided by contents, not extension** (`AudioFormat.needsConversion(_:probe:)` +
   `AudioProbe`). `.m4a` covers both 256 kbps AAC and 24-bit/96 kHz ALAC, so `LibraryScanner` opens
   natively wrapped files and re-encodes them when they exceed `AudioFormat.maxSampleRate` (44100),
