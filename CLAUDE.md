@@ -28,12 +28,24 @@ intltool` only when `Vendor/libgpod/configure` still needs generating.
 
 ### Cutting a release
 
+Releases ship **two** zips, one per architecture — not a universal binary. Build both:
+
 ```bash
+# Apple silicon
 CONFIG=Release ./build.sh build
-./Scripts/bundle-app.sh                    # make the .app self-contained
+./Scripts/bundle-app.sh "build/Build/Products/Release/My Pod.app"
 ditto -c -k --sequesterRsrc --keepParent \
   "build/Build/Products/Release/My Pod.app" "My-Pod-<version>-arm64.zip"
+
+# Intel
+ARCH=x86_64 CONFIG=Release ./build.sh build
+./Scripts/bundle-app.sh "build-x86_64/Build/Products/Release/My Pod.app"
+ditto -c -k --sequesterRsrc --keepParent \
+  "build-x86_64/Build/Products/Release/My Pod.app" "My-Pod-<version>-x86_64.zip"
 ```
+
+The two builds use separate derived-data trees (`build/` and `build-x86_64/`) so both can exist at
+once; `bundle-app.sh` therefore needs its path argument rather than the default.
 
 `bundle-app.sh` exists because **only libgpod is static** — the app still links glib, gobject,
 gmodule, intl, libplist and gdk-pixbuf from Homebrew by absolute path, so an unbundled `.app` dies
@@ -60,21 +72,73 @@ codesign -d --entitlements - "$APP" 2>/dev/null | grep -c get-task-allow
 Ship **only** the `.app`. The `.dSYM` built beside it still carries the full `DW_AT_comp_dir` build
 paths by design — that is what it's for — so it must never go into a release.
 
-Bump `MARKETING_VERSION` in the project and the download button + version line in `docs/index.html`,
-which hardcode the asset URL (`releases/download/v<version>/My-Pod-<version>-arm64.zip`). The page
-is served by GitHub Pages from `main` → `/docs`, so pushing publishes it.
+Bump `MARKETING_VERSION` in the project and **both** download buttons + the version line in
+`docs/index.html`, which hardcode the asset URLs
+(`releases/download/v<version>/My-Pod-<version>-{arm64,x86_64}.zip`). The page is served by GitHub
+Pages from `main` → `/docs`, so pushing publishes it — which means pushing a version bump *before*
+the release exists points both buttons at a 404. Cut the release first, then push the page.
+
+**The page asks which Mac the user has; it must not try to detect it.** Safari and Chrome both
+report `Intel Mac OS X 10_15_7` in `navigator.userAgent` on Apple silicon, so sniffing hands
+M-series users the Intel build with full confidence. `navigator.userAgentData` exposes the real
+architecture but exists only in Chromium. There is no signal that works in Safari, which is most of
+this audience.
 
 Everything the page loads must live **inside** `docs/` — Pages serving from `/docs` treats that
 folder as the site root and cannot reach `../icon/`. Hence `docs/app-icon.png` and `docs/icon.svg`
 are copies; `icon/` remains the design source (the `.afdesign` and its component SVGs).
 
-Releases are arm64-only and ad-hoc signed (there is no `DEVELOPMENT_TEAM`), so users must clear the
+Releases are ad-hoc signed (there is no `DEVELOPMENT_TEAM`), so users must clear the
 quarantine flag. Notarizing would require a Developer ID and turning on hardened runtime, which is
 currently off. Because libgpod is statically linked, **any binary release must be accompanied by the
 corresponding source** — see the licensing section.
 
+### Cross-compiling for Intel
+
+`ARCH=x86_64 ./build.sh build`. The interesting problem isn't the Swift — Xcode cross-compiles that
+happily — it's that Homebrew on Apple Silicon installs **arm64-only dylibs**, so an Intel build has
+nothing to link against.
+
+The obvious fix, a second Homebrew under `/usr/local` via Rosetta, means compiling glib and its
+dependencies **from source**, because Homebrew no longer produces Intel bottles for current macOS.
+But it still *hosts* the last ones it built, tagged `sonoma` — Homebrew's Intel tags carry no arch
+prefix, so `sonoma` is x86_64 and `arm64_sonoma` is Apple silicon. `Scripts/fetch-intel-deps.sh`
+downloads those into `Vendor/intel-deps/` and makes them usable:
+
+- Bottles are **relocatable**: paths inside are the literal strings `@@HOMEBREW_PREFIX@@` and
+  `@@HOMEBREW_CELLAR@@`, which Homebrew rewrites at install time. Nothing is installed here, so the
+  script does that rewriting — in `.pc` files as text, in dylibs as load commands.
+- Not every path is a placeholder. Intel bottles are built for `/usr/local` and a few `.pc` files
+  bake that in literally. `gdk-pixbuf-2.0.pc` is one, and the failure is silent and nasty: an
+  unrewritten `-I/usr/local/include/gdk-pixbuf-2.0` makes libgpod's configure report
+  *"gdkpixbuf support is disabled"*, which builds and runs perfectly and **writes no artwork**.
+  The script therefore verifies `gdk-pixbuf-2.0` resolves *and* that the header is reachable, and
+  `build-libgpod.sh` greps `config.h` for `HAVE_GDKPIXBUF` and fails the build without it.
+- `libtiff`, `webp`, `xz`, `zstd` and `lz4` are staged but **not linked by anything**. They're there
+  because `gdk-pixbuf-2.0.pc` names `libtiff-4` in `Requires`, and pkg-config resolves `Requires`
+  transitively before it will answer at all.
+- `sqlite3`, `libxml-2.0` and `zlib` are macOS system libraries with no bottle. The script generates
+  pkg-config shims pointing at the SDK, whose `.tbd` stubs carry every slice, so they're arch-neutral.
+- The staged tree gets `opt/<formula>` symlinks so it's **shaped like a Homebrew prefix**. That's why
+  the only build-settings change is pointing `BREW_PREFIX` at it.
+
+`build-libgpod.sh` takes `ARCHS` and produces a **fat** `libgpod.a`, so the xcconfig names one path
+for both architectures. libgpod's configure refuses to run VPATH while the source tree is already
+configured, and `distclean` wipes `src/.libs`, so the arches can't be built side by side — each is
+built in turn and its archive cached in `Vendor/libgpod-arch/`. That cache is what stops adding
+x86_64 from re-doing arm64.
+
+Both `Vendor/intel-deps/` and `Vendor/libgpod-arch/` are gitignored build products.
+
 **There is no test target and no tests.** Verification is by building and running against a real
-device. The highest-value check before publishing changes is a fresh-clone build from tracked files
+device. An Intel build can at least be smoke-tested on Apple silicon — it launches under Rosetta,
+which exercises the same dyld path that "Library not loaded" failures show up in:
+
+```bash
+"build-x86_64/Build/Products/Release/My Pod.app/Contents/MacOS/My Pod"
+```
+
+That proves the bundle resolves. It does **not** prove syncing works on real Intel hardware. The highest-value check before publishing changes is a fresh-clone build from tracked files
 only, which catches things `.gitignore` accidentally excludes:
 
 ```bash

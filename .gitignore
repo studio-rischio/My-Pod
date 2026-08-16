@@ -68,6 +68,9 @@ fastlane/test_output
 /examples/
 /agent_space/
 /build/
+# Cross-compiled output. ARCH=x86_64 ./build.sh uses its own derived-data
+# tree so both architectures can be built without clobbering each other.
+/build-*/
 .DS_Store
 *~lock~*
 
@@ -113,5 +116,12 @@ Vendor/libgpod/po/stamp-it
 # versions; these are kept locally so a re-encode doesn't mean re-shooting.
 /docs/screenshots/_originals/
 
-# Release artifacts, built by ./Scripts/bundle-app.sh + ditto.
-/My-Pod-*-arm64.zip
+# Release artifacts, built by ./Scripts/bundle-app.sh + ditto. One per
+# architecture, so match the whole family rather than a single arch suffix.
+/My-Pod-*.zip
+
+# Per-architecture libgpod archives and the staged x86_64 Homebrew libraries.
+# Both are build products of Scripts/build-libgpod.sh and
+# Scripts/fetch-intel-deps.sh, reproducible from a clean checkout.
+Vendor/libgpod-arch/
+Vendor/intel-deps/

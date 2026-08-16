@@ -3,14 +3,19 @@
 # Make a built "My Pod.app" self-contained so it runs on Macs without Homebrew.
 #
 # Only libgpod is statically linked. The app still links six Homebrew dylibs by
-# absolute path (/opt/homebrew/opt/...), so a freshly built .app dies at launch
-# with "Library not loaded" on any machine that lacks them — including Intel
-# Macs, where Homebrew lives at /usr/local instead.
+# absolute path, which pull four more transitively, so a freshly built .app dies
+# at launch with "Library not loaded" on any machine that lacks them.
 #
 # This script walks the dependency graph, copies every non-system dylib into
 # Contents/Frameworks, rewrites the load commands to @rpath, and re-signs.
 # Rewriting load commands invalidates the existing signature, so the re-sign at
 # the end is mandatory, not cosmetic.
+#
+# Architecture-agnostic by construction: it follows whatever the binary actually
+# references. For the arm64 build that's /opt/homebrew/opt/...; for the Intel
+# build it's Vendor/intel-deps/lib/..., staged by Scripts/fetch-intel-deps.sh.
+# Both are absolute paths outside /usr/lib, which is the only property the walk
+# below cares about. Run it once per architecture, on each built .app.
 #
 # Note on gdk-pixbuf: its PNG and JPEG decoders are compiled into
 # libgdk_pixbuf itself (Homebrew ships no external loader for either), and

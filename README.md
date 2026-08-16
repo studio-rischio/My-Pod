@@ -52,11 +52,13 @@ Playlists are authored outside My Pod for now: build them in Finder, a text edit
 
 ## Download
 
-Grab the latest `My-Pod-*-arm64.zip` from [Releases](https://github.com/studio-rischio/My-Pod/releases),
-unzip it, and drag `My Pod.app` to `/Applications`. Everything it needs is inside the bundle — no
-Homebrew required to run it.
+Grab the latest build for your Mac from [Releases](https://github.com/studio-rischio/My-Pod/releases)
+— `My-Pod-*-arm64.zip` for Apple silicon, `My-Pod-*-x86_64.zip` for Intel — unzip it, and drag
+`My Pod.app` to `/Applications`. Everything it needs is inside the bundle, so no Homebrew is
+required to run it.
 
-Apple silicon only. On an Intel Mac, build from source (see below) with `BREW_PREFIX=/usr/local`.
+Not sure which you need? **Apple menu ▸ About This Mac**: a chip named *Apple M1* or later is Apple
+silicon; anything named *Intel* is the other one.
 
 The app is signed ad-hoc rather than with an Apple Developer ID, so macOS quarantines it on download
 and reports it as damaged. Clear the quarantine flag once:
@@ -91,7 +93,7 @@ if yours already appears in My Pod, none of this is needed.
 
 These are for building from source; the release download needs none of them.
 
-- macOS 15.7 or later
+- macOS 14 or later
 - Xcode 26 or later
 - Homebrew
 
@@ -119,6 +121,14 @@ cd My-Pod
 
 You can also open `My Pod.xcodeproj` and build normally; a run-script phase builds libgpod if it's missing.
 
+### Building for Intel
+
+```bash
+ARCH=x86_64 ./build.sh build
+```
+
+This works from an Apple silicon Mac. Homebrew there installs arm64-only libraries, so the Intel build can't use them — instead `Scripts/fetch-intel-deps.sh` downloads Homebrew's last x86_64 bottles into `Vendor/intel-deps/` and libgpod is cross-compiled against those. `build.sh` runs it for you. The result lands in `build-x86_64/` rather than `build/`, so both architectures can coexist.
+
 ## Project layout
 
 ```
@@ -128,7 +138,7 @@ My Pod/          App source
   Services/      Scanning, conversion, sync engine, device control
   Views/         SwiftUI interface
 Vendor/libgpod/  Vendored libgpod (modified fork), statically linked
-Scripts/         build-libgpod.sh
+Scripts/         build-libgpod.sh, fetch-intel-deps.sh, bundle-app.sh
 Config/          MyPod.xcconfig — search paths, link flags, sandbox settings
 docs/            Project page (GitHub Pages) and its screenshots
 icon/            App icon design source
