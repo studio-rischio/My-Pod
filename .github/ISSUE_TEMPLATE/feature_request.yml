@@ -1,0 +1,80 @@
+name: Feature request
+description: Suggest something My Pod should be able to do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Worth a look first: the
+        [Roadmap](https://github.com/studio-rischio/My-Pod/wiki/Roadmap) lists what's
+        already planned, what's under consideration, and what's been ruled out — with
+        the reasoning, so you can tell whether your case changes it.
+
+        One thing that comes up often: **My Pod deliberately converts more music than
+        it strictly has to.** The thresholds are tighter than the hardware is
+        documented to accept. That's the intended trade — an unnecessary re-encode
+        costs a little quality on a device whose output stage is 16-bit anyway, while
+        a file that turns out to be unplayable costs a track that silently skips, on
+        hardware with no error reporting. If you're asking for a limit to be relaxed,
+        the most useful thing you can bring is evidence of the *absence* of failure
+        across full albums, not one track that played.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like to be able to do?
+      description: >
+        Describe the outcome you're after rather than a specific implementation —
+        there's often a simpler route to the same thing, and knowing the goal makes it
+        easier to find.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What do you do instead at the moment?
+      description: >
+        The workaround, if you have one — another app, a manual step, keeping a second
+        copy of your library. This is frequently the most useful part of a request,
+        because it shows what the feature is actually competing with.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app
+      options:
+        - Music library and selection
+        - Playlists
+        - Audio formats and conversion
+        - Device detection and syncing
+        - Cover art
+        - Interface and general behaviour
+        - Something else
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ipod-model
+    attributes:
+      label: Which iPod
+      description: >
+        Only matters if the request is specific to your hardware — firmware differs
+        enough between models that format and playback requests usually are.
+      options:
+        - Not specific to a model
+        - iPod photo (4th generation, colour)
+        - iPod 4th generation (monochrome click wheel)
+        - iPod 5th generation (video)
+        - iPod classic (6th generation)
+        - iPod mini
+        - iPod nano
+        - Other or not sure
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >
+        Sketches, screenshots from other software, or a link to how something else
+        handles it. Drag images straight in.

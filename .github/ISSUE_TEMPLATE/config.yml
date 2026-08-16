@@ -1,0 +1,18 @@
+# Blank issues stay enabled on purpose. The forms cover the two common cases,
+# but someone with a question, a correction, or something that fits neither
+# should never be stuck picking a template that misdescribes what they're
+# filing — which is exactly what happened before a feature-request form existed.
+blank_issues_enabled: true
+
+contact_links:
+  - name: Roadmap — what's planned, and what isn't
+    url: https://github.com/studio-rischio/My-Pod/wiki/Roadmap
+    about: Planned work, ideas under consideration, and things ruled out with reasons.
+
+  - name: Verified iPod models
+    url: https://github.com/studio-rischio/My-Pod/wiki/Roadmap#4-verified-ipod-models
+    about: Which iPods have been tested, what passed, and how to add yours.
+
+  - name: Connecting the iPod
+    url: https://github.com/studio-rischio/My-Pod#connecting-the-ipod
+    about: The device has to be in disk mode before My Pod can see it. Start here if it isn't detected.
