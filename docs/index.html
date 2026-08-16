@@ -486,25 +486,36 @@
   </p>
 
   <p class="meta">
-    <span>macOS 15.7+</span>
-    <span>Apple silicon</span>
+    <span>macOS 14+</span>
+    <span>Apple silicon &amp; Intel</span>
     <span>MIT licensed</span>
     <span>Built on libgpod</span>
   </p>
 
-  <!-- Versioned asset URL: bump it when cutting a release. The
+  <!-- Versioned asset URLs: bump them when cutting a release. The
        /releases/latest/download/ form would survive a version bump on its own,
        but only if the asset name never changes, and ours carries the version
-       so a downloaded zip says what it is. -->
+       so a downloaded zip says what it is.
+
+       Two separate builds rather than one universal binary, and deliberately no
+       auto-detection: Safari and Chrome both report "Intel Mac OS X 10_15_7" in
+       navigator.userAgent on Apple silicon, so sniffing would confidently hand
+       M-series users the wrong build. navigator.userAgentData exposes the real
+       architecture but only in Chromium. Asking is the only honest option, so
+       the note below says how to check. -->
   <div class="actions">
-    <a class="btn btn-primary" href="https://github.com/studio-rischio/My-Pod/releases/download/v1.4/My-Pod-1.4-arm64.zip">Download for macOS</a>
+    <a class="btn btn-primary" href="https://github.com/studio-rischio/My-Pod/releases/download/v1.5/My-Pod-1.5-arm64.zip">Download for Apple&nbsp;silicon</a>
+    <a class="btn" href="https://github.com/studio-rischio/My-Pod/releases/download/v1.5/My-Pod-1.5-x86_64.zip">Download for Intel</a>
     <a class="btn" href="https://github.com/studio-rischio/My-Pod">View source on GitHub</a>
     <a class="btn" href="#get">How to build it</a>
   </div>
 
   <p class="actions-note">
-    Version&nbsp;1.4 &middot; 4.3&nbsp;MB &middot; Apple silicon &middot; needs
-    <a href="#get">one command after unzipping</a>.
+    Version&nbsp;1.5 &middot; 4.3&nbsp;MB &middot; needs
+    <a href="#get">one command after unzipping</a>.<br>
+    Not sure which? <strong>Apple menu &rsaquo; About This Mac</strong> &mdash; a
+    chip named <em>Apple&nbsp;M1</em> or later is Apple&nbsp;silicon, anything
+    named <em>Intel</em> is the other one.
   </p>
 
   <div class="pair">
@@ -549,7 +560,7 @@
     </li>
     <li>
       <h3>Conversion you don&rsquo;t manage</h3>
-      <p>FLAC, OGG, Opus, WMA and APE are converted to 256&nbsp;kbps AAC, and the iPod plays that copy — the originals stay untouched. Each conversion is cached beside its source, so a file is only ever encoded once.</p>
+      <p>FLAC, OGG, Opus, WMA and APE are converted to 256&nbsp;kbps AAC, and the iPod plays that copy — the originals stay untouched. Conversions are cached, so a file is only ever encoded once, and Settings decides where they live and how far the quality limits go.</p>
     </li>
     <li>
       <h3>Cover art that shows up</h3>
@@ -690,7 +701,7 @@
     <div>
       <h3 class="eyebrow eyebrow-tight">Build from source</h3>
       <ul class="req">
-        <li><dfn>macOS</dfn><span>15.7 or later</span></li>
+        <li><dfn>macOS</dfn><span>14 or later</span></li>
         <li><dfn>Xcode</dfn><span>26 or later</span></li>
         <li><dfn>Homebrew</dfn><span>for glib and pkg-config</span></li>
       </ul>
