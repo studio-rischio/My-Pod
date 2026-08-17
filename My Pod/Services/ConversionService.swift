@@ -12,9 +12,11 @@ enum ConversionError: LocalizedError {
     }
 }
 
-/// Transcodes non-iPod-playable formats (FLAC, OGG, etc.) into AAC at
-/// ~256 kbps inside an `.m4a` container by shelling out to macOS's bundled
-/// `/usr/bin/afconvert`. Output goes wherever `CacheLocation` says — by default
+/// Transcodes non-iPod-playable formats (FLAC, OGG, etc.) into an `.m4a` the
+/// device can play, by shelling out to macOS's bundled `/usr/bin/afconvert`.
+/// The codec is AAC ~256 kbps by default; a lossless `ConversionCeiling` sends
+/// lossless *sources* to ALAC instead, while lossy ones stay AAC whatever the
+/// setting. Output goes wherever `CacheLocation` says — by default
 /// `~/Library/Application Support/My Pod/Converted`, or a hidden `.mypod/`
 /// folder inside the source album directory.
 ///
@@ -40,15 +42,11 @@ nonisolated struct ConversionService: Sendable {
     ///     produces files iPod firmware can't index for seeking. Also force
     ///     44.1 kHz output (`aac@44100`) — hi-res FLAC sources passing through
     ///     at 48/96 kHz were skipping on the iPod Photo.
-    ///     The 44.1 kHz forcing is now the default rather than absolute — see
-    ///     `ConversionProfile`. That isn't a version bump: output at 44.1 kHz is
-    ///     unchanged, and output at any other rate is kept under a separate
-    ///     cache path rather than overwriting it.
+    ///     The 44.1 kHz forcing and the AAC codec are now a default rather than
+    ///     absolute — see `ConversionCeiling`. That isn't a version bump: output
+    ///     at the default ceiling is byte-identical, and only one ceiling's
+    ///     output is ever cached, because changing it clears the cache.
     static let cacheVersion = "9"
-
-    /// The rate everything targeted before `ConversionProfile` existed, and
-    /// still the fallback whenever a source's own rate is unknown.
-    static let defaultSampleRate = AudioFormat.maxSampleRate
 
     /// AAC encoder bit rate in bits/second.
     static let aacBitRate = 256_000
@@ -68,44 +66,78 @@ nonisolated struct ConversionService: Sendable {
     init(
         maxConcurrent: Int = 2,
         cacheLocation: CacheLocation = .current,
-        profile: ConversionProfile = .current
+        ceiling: ConversionCeiling = .current
     ) {
         self.maxConcurrent = max(1, maxConcurrent)
         self.cacheLocation = cacheLocation
-        self.profile = profile
+        self.ceiling = ceiling
     }
 
     /// Where the user has chosen to keep converted files. Captured at init so
     /// a single sync run can't straddle a location change mid-flight.
     let cacheLocation: CacheLocation
 
-    /// How tightly to re-encode. Captured at init for the same reason as
-    /// `cacheLocation` — a run that changed rate partway through would write
-    /// half its output to a cache path the other half never looks in.
-    let profile: ConversionProfile
+    /// The quality ceiling to encode against. Captured at init for the same
+    /// reason as `cacheLocation` — a run that changed ceiling partway through
+    /// would write half its output in one format and half in another, to paths
+    /// that don't distinguish them.
+    let ceiling: ConversionCeiling
 
     /// The sample rate this track's conversion targets.
-    ///
-    /// Part of the cache path, so it has to be derived the same way every time
-    /// it's asked for rather than decided at encode time.
     nonisolated func encodeRate(for track: LibraryTrack) -> Int {
-        profile.encodeRate(sourceRate: track.sampleRate)
+        ceiling.encodeRate(sourceRate: track.sampleRate)
+    }
+
+    /// The codec this track's conversion produces. Lossy sources are always
+    /// AAC, whatever the ceiling — see `ConversionCeiling.targetCodec`.
+    nonisolated func targetCodec(for track: LibraryTrack) -> ConversionCeiling.Codec {
+        ceiling.targetCodec(sourceIsLossless: track.isLossless)
+    }
+
+    /// How this track will be stored on the iPod, in the user's terms.
+    nonisolated func targetFormatDescription(for track: LibraryTrack) -> String {
+        guard track.needsConversion else { return "Copied unchanged" }
+        return switch targetCodec(for: track) {
+        case .aac: "AAC \(Self.aacBitRate / 1000) kbps · \(rateLabel(for: track))"
+        case .alac: "Apple Lossless 16-bit · \(rateLabel(for: track))"
+        }
+    }
+
+    nonisolated private func rateLabel(for track: LibraryTrack) -> String {
+        let khz = Double(encodeRate(for: track)) / 1000
+        return khz == khz.rounded()
+            ? String(format: "%.0f kHz", khz)
+            : String(format: "%.1f kHz", khz)
     }
 
     nonisolated func iPodPlayableURL(for track: LibraryTrack) -> URL {
         guard track.needsConversion else { return track.url }
-        return cacheLocation.url(forSource: track.url, rate: encodeRate(for: track))
+        return cacheLocation.url(forSource: track.url)
     }
+
+    /// Compressed size of ALAC as a fraction of the raw PCM it encodes.
+    ///
+    /// Real music lands between about 0.50 and 0.70 depending on density; a
+    /// sparse recording compresses far better than a loud one. Rounded to the
+    /// pessimistic end on purpose, for the same reason as `vbrOverheadFactor`:
+    /// a space budget should err toward leaving headroom rather than
+    /// overfilling a device that gives no warning when it runs out. Tier 1
+    /// supersedes this the moment anything is actually converted.
+    static let alacPCMRatio = 0.65
 
     /// Bytes this track will actually occupy on the iPod.
     ///
-    /// Native files copy verbatim, so their source size is exact. Convertible
-    /// ones land as AAC 256k m4a, which for FLAC is roughly a third of the
-    /// source — budgeting against `sizeBytes` would badly under-fill the
-    /// device. Three tiers, most accurate first:
+    /// Native files copy verbatim, so their source size is exact. Converted
+    /// ones depend on the codec they land in, which is why this consults
+    /// `targetCodec` rather than assuming AAC: the two differ by roughly 3×, and
+    /// under-reporting is what silently defeats `SyncPlan.fits` and lets a sync
+    /// fill the device partway through the add phase — after removals have
+    /// already run.
+    ///
+    /// Three tiers, most accurate first:
     ///   1. already converted → measure the cached file
-    ///   2. known duration (FLAC, via STREAMINFO) → duration × bitrate
-    ///   3. neither → scale the source size by a per-format ratio
+    ///   2. known duration → derive it from the target format
+    ///   3. neither → scale the source size
     nonisolated func estimatedIPodBytes(for track: LibraryTrack) -> UInt64 {
         guard track.needsConversion else { return track.sizeBytes }
 
@@ -116,25 +148,61 @@ nonisolated struct ConversionService: Sendable {
             return UInt64(size)
         }
 
-        if track.durationMS > 0 {
-            let bytesPerMS = Double(Self.aacBitRate) / 8.0 / 1000.0
-            return UInt64(Double(track.durationMS) * bytesPerMS * Self.vbrOverheadFactor)
-        }
+        switch targetCodec(for: track) {
+        case .aac:
+            if track.durationMS > 0 {
+                let bytesPerMS = Double(Self.aacBitRate) / 8.0 / 1000.0
+                return UInt64(Double(track.durationMS) * bytesPerMS * Self.vbrOverheadFactor)
+            }
+            return UInt64(Double(track.sizeBytes) * Self.aacSizeRatio(track.fileExtension))
 
-        return UInt64(Double(track.sizeBytes) * Self.sizeRatio(track.fileExtension))
+        case .alac:
+            // Lossless output has no bitrate to multiply by — its size follows
+            // the PCM it encodes, so derive that from the rate and depth the
+            // encoder will actually write. Channel count isn't tracked; stereo
+            // covers effectively all music, and a mono file simply comes in
+            // under budget.
+            if track.durationMS > 0 {
+                let rate = Double(encodeRate(for: track))
+                let bytesPerSample = 2.0            // always encoded at 16-bit
+                let channels = 2.0
+                let pcm = Double(track.durationMS) / 1000.0 * rate * bytesPerSample * channels
+                return UInt64(pcm * Self.alacPCMRatio)
+            }
+            // No duration: scale the source instead. Both sides are lossless, so
+            // FLAC → ALAC at matched rate and depth is near 1:1 (measured 1.015),
+            // and anything the encoder downsamples or truncates shrinks in
+            // proportion.
+            return UInt64(Double(track.sizeBytes) * Self.losslessScale(for: track, targetRate: encodeRate(for: track)))
+        }
     }
 
-    /// Fallback multipliers: (typical AAC 256k size) ÷ (typical source size),
-    /// used only when we couldn't read a duration. Lossless sources shrink;
-    /// the lossy ones we transcode from are usually encoded below 256k, so
-    /// they grow.
-    nonisolated private static func sizeRatio(_ ext: String) -> Double {
+    /// Fallback multipliers for AAC output: (typical AAC 256k size) ÷ (typical
+    /// source size), used only when we couldn't read a duration. Lossless
+    /// sources shrink; the lossy ones we transcode from are usually encoded
+    /// below 256k, so they grow.
+    nonisolated private static func aacSizeRatio(_ ext: String) -> Double {
         switch ext.lowercased() {
         case "flac", "ape", "alac": 0.30   // ~850 kbps lossless → 256 kbps
         case "ogg", "wma":          1.30   // ~192 kbps → 256 kbps
         case "opus":                2.00   // ~128 kbps → 256 kbps
         default:                    1.00
         }
+    }
+
+    /// How much of a lossless source survives into 16-bit ALAC at `targetRate`.
+    /// Capped at 1.05 — ALAC compresses slightly worse than FLAC, but a
+    /// conversion never *grows* by more than that, and an unknown source format
+    /// shouldn't be allowed to produce a wild over-estimate.
+    nonisolated private static func losslessScale(for track: LibraryTrack, targetRate: Int) -> Double {
+        var scale = 1.05
+        if track.sampleRate > 0, targetRate < track.sampleRate {
+            scale *= Double(targetRate) / Double(track.sampleRate)
+        }
+        if track.bitDepth > 16 {
+            scale *= 16.0 / Double(track.bitDepth)
+        }
+        return min(scale, 1.05)
     }
 
     nonisolated func pending(_ tracks: [LibraryTrack]) -> [LibraryTrack] {
@@ -144,14 +212,14 @@ nonisolated struct ConversionService: Sendable {
     nonisolated func isCached(_ track: LibraryTrack) -> Bool {
         guard track.needsConversion else { return true }
         let target = iPodPlayableURL(for: track)
-        guard cacheVersionMatches(target: target, rate: encodeRate(for: track)) else { return false }
+        guard cacheVersionMatches(target: target) else { return false }
         return isUpToDate(source: track.url, target: target)
     }
 
-    nonisolated private func cacheVersionMatches(target: URL, rate: Int) -> Bool {
+    nonisolated private func cacheVersionMatches(target: URL) -> Bool {
         // No marker means the version is already part of the path, so simply
         // finding a file there proves it was written by this version.
-        guard let marker = cacheLocation.versionMarker(forTarget: target, rate: rate) else { return true }
+        guard let marker = cacheLocation.versionMarker(forTarget: target) else { return true }
         guard let data = try? Data(contentsOf: marker),
               let s = String(data: data, encoding: .utf8) else {
             return false
@@ -163,8 +231,9 @@ nonisolated struct ConversionService: Sendable {
         let target = iPodPlayableURL(for: track)
         guard track.needsConversion else { return track.url }
         let rate = encodeRate(for: track)
+        let codec = targetCodec(for: track)
         if !force,
-           cacheVersionMatches(target: target, rate: rate),
+           cacheVersionMatches(target: target),
            isUpToDate(source: track.url, target: target) {
             Log.convert.debug("cache hit: \(track.title)")
             return target
@@ -172,14 +241,14 @@ nonisolated struct ConversionService: Sendable {
 
         try cacheLocation.createDirectory(for: target)
         let started = Date()
-        Log.convert.debug("convert started\(force ? " (forced)" : ""): \(track.url.lastPathComponent) @ \(rate) Hz")
+        Log.convert.debug("convert started\(force ? " (forced)" : ""): \(track.url.lastPathComponent) → \(codec.rawValue) @ \(rate) Hz")
         do {
-            try await export(source: track.url, to: target, rate: rate)
+            try await export(source: track.url, to: target, rate: rate, codec: codec)
         } catch {
             Log.convert.error("convert failed: \(track.url.lastPathComponent) — \(error.localizedDescription)")
             throw error
         }
-        if let marker = cacheLocation.versionMarker(forTarget: target, rate: rate) {
+        if let marker = cacheLocation.versionMarker(forTarget: target) {
             try? Self.cacheVersion.data(using: .utf8)?.write(to: marker, options: [.atomic])
         }
         let ms = Int(Date().timeIntervalSince(started) * 1000)
@@ -239,23 +308,67 @@ nonisolated struct ConversionService: Sendable {
         return targetMtime >= sourceMtime
     }
 
-    nonisolated private func export(source: URL, to target: URL, rate: Int) async throws {
+    nonisolated private func export(
+        source: URL,
+        to target: URL,
+        rate: Int,
+        codec: ConversionCeiling.Codec
+    ) async throws {
         let tmp = target.deletingLastPathComponent()
             .appendingPathComponent(".\(target.lastPathComponent).part")
         try? FileManager.default.removeItem(at: tmp)
         try? FileManager.default.removeItem(at: target)
 
+        switch codec {
+        case .aac:
+            try await run([
+                "-f", "m4af",                      // m4a file format
+                "-d", "aac@\(rate)",               // AAC-LC at the ceiling's rate — 44.1 kHz unless the user opted up (older iPods are flaky at 48k+)
+                "-b", String(Self.aacBitRate),     // bitrate (only honored under -s 2 / -s 0, not -s 3)
+                "-q", "127",                       // highest quality
+                "-s", "2",                         // constrained VBR — same mode iTunes uses; -s 3 (true VBR) breaks iPod seeking
+                source.path,
+                tmp.path,
+            ], cleaningUp: [tmp])
+
+        case .alac:
+            // Two passes, and not by choice. afconvert exposes no bit-depth flag
+            // for ALAC and defaults to 32-bit source data, so a direct
+            // `-d alac@44100` yields a 32-bit file — larger than the 24-bit
+            // original, and out of spec by this app's own rules, which re-encode
+            // lossless above 16 bits. Even a 16-bit FLAC comes back 32-bit.
+            // Going through explicit 16-bit PCM is the only way to pin the depth.
+            // Verified against the bench set: a 24-bit/96 kHz source lands at
+            // exactly the byte count of the known-good 16-bit/44.1 kHz file.
+            let pcm = target.deletingLastPathComponent()
+                .appendingPathComponent(".\(target.lastPathComponent).pcm.caf")
+            try? FileManager.default.removeItem(at: pcm)
+            defer { try? FileManager.default.removeItem(at: pcm) }
+
+            try await run([
+                "-f", "caff",
+                "-d", "LEI16@\(rate)",             // 16-bit little-endian PCM at the target rate
+                source.path,
+                pcm.path,
+            ], cleaningUp: [pcm, tmp])
+
+            try await run([
+                "-f", "m4af",
+                "-d", "alac",                      // depth and rate both come from the PCM above
+                pcm.path,
+                tmp.path,
+            ], cleaningUp: [pcm, tmp])
+        }
+
+        try FileManager.default.moveItem(at: tmp, to: target)
+    }
+
+    /// One afconvert invocation. `cleaningUp` is removed if it fails, so a
+    /// half-written intermediate never survives to be mistaken for output.
+    nonisolated private func run(_ arguments: [String], cleaningUp: [URL]) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-        process.arguments = [
-            "-f", "m4af",                      // m4a file format
-            "-d", "aac@\(rate)",               // AAC-LC at the profile's rate — 44.1 kHz unless the user opted up (older iPods are flaky at 48k+)
-            "-b", String(Self.aacBitRate),     // bitrate (only honored under -s 2 / -s 0, not -s 3)
-            "-q", "127",                       // highest quality
-            "-s", "2",                         // constrained VBR — same mode iTunes uses; -s 3 (true VBR) breaks iPod seeking
-            source.path,
-            tmp.path,
-        ]
+        process.arguments = arguments
         let stderr = Pipe()
         process.standardError = stderr
         process.standardOutput = Pipe()
@@ -273,10 +386,8 @@ nonisolated struct ConversionService: Sendable {
         guard process.terminationStatus == 0 else {
             let data = stderr.fileHandleForReading.readDataToEndOfFile()
             let msg = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            try? FileManager.default.removeItem(at: tmp)
+            for url in cleaningUp { try? FileManager.default.removeItem(at: url) }
             throw ConversionError.exportFailed(msg.isEmpty ? "afconvert exit \(process.terminationStatus)" : msg)
         }
-
-        try FileManager.default.moveItem(at: tmp, to: target)
     }
 }

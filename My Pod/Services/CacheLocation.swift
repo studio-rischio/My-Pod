@@ -79,42 +79,36 @@ nonisolated enum CacheLocation: String, CaseIterable, Sendable {
     /// looks current while still holding old output. Encoding the version in the
     /// path makes a bump a different location, so a stale file is unreachable
     /// rather than merely mislabelled.
-    private static func versionedRoot(rate: Int) -> URL {
-        appSupportRoot.appendingPathComponent(
-            "v\(ConversionService.cacheVersion)\(suffix(forRate: rate))",
-            isDirectory: true
-        )
+    private static var versionedRoot: URL {
+        appSupportRoot.appendingPathComponent("v\(ConversionService.cacheVersion)", isDirectory: true)
     }
 
-    /// Distinguishes output encoded at different sample rates.
+    /// Where this track's converted file belongs.
     ///
-    /// Keyed on the rate the encoder actually targeted, not on the conversion
-    /// profile, and empty at 44.1 kHz. Both details matter. Empty at 44.1 keeps
-    /// every file converted before this setting existed exactly where it was, so
-    /// upgrading re-encodes nothing. Keying on the rate rather than the profile
-    /// means a 44.1 kHz FLAC lands in the same place under every profile — its
-    /// output is byte-identical either way — so switching to "Allow 48 kHz" to
-    /// spare a handful of hi-res files doesn't re-transcode the whole library.
-    private static func suffix(forRate rate: Int) -> String {
-        rate == ConversionService.defaultSampleRate ? "" : "-\(rate / 1000)"
-    }
-
-    /// Where this track's converted file belongs, given the rate it'll be
-    /// encoded at.
-    func url(forSource source: URL, rate: Int) -> URL {
+    /// Deliberately **not** keyed by the conversion ceiling. Only one format is
+    /// ever cached at a time: changing the ceiling clears the cache and
+    /// re-encodes, which `SettingsView` confirms with the user first. Keying by
+    /// ceiling instead would mean holding several encodings of the same track,
+    /// and the app has no way to tell which of them is worth keeping.
+    ///
+    /// The consequence is that clearing on change is **load-bearing, not
+    /// tidiness**. A ceiling change that skipped it would leave every converted
+    /// file at the path the new ceiling now looks in, `isUpToDate` would find
+    /// them newer than their sources, and the sync would keep shipping the old
+    /// format forever with the UI reporting nothing pending.
+    func url(forSource source: URL) -> URL {
         switch self {
         case .besideMusic:
             let dir = source.deletingLastPathComponent()
                 .appendingPathComponent(".mypod", isDirectory: true)
-            let base = source.deletingPathExtension().lastPathComponent
-            return dir.appendingPathComponent("\(base)\(Self.suffix(forRate: rate)).m4a")
+            return dir.appendingPathComponent("\(source.deletingPathExtension().lastPathComponent).m4a")
 
         case .applicationSupport:
             let digest = SHA256.hash(data: Data(source.path.utf8))
             let hex = digest.map { String(format: "%02x", $0) }.joined()
             // Two-character fan-out so no single directory holds tens of
             // thousands of entries.
-            return Self.versionedRoot(rate: rate)
+            return Self.versionedRoot
                 .appendingPathComponent(String(hex.prefix(2)), isDirectory: true)
                 .appendingPathComponent("\(hex).m4a")
         }
@@ -122,15 +116,10 @@ nonisolated enum CacheLocation: String, CaseIterable, Sendable {
 
     /// The version marker for a converted file, or nil when the version is
     /// already encoded in the path and no marker is needed.
-    ///
-    /// The rate is in the marker's *name* so a `.mypod` folder holding both
-    /// 44.1 and 48 kHz output doesn't have the two rates overwriting each
-    /// other's version stamp.
-    func versionMarker(forTarget target: URL, rate: Int) -> URL? {
+    func versionMarker(forTarget target: URL) -> URL? {
         switch self {
         case .besideMusic:
-            target.deletingLastPathComponent()
-                .appendingPathComponent(".version\(Self.suffix(forRate: rate))")
+            target.deletingLastPathComponent().appendingPathComponent(".version")
         case .applicationSupport:
             nil
         }

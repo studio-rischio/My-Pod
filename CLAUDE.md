@@ -198,9 +198,9 @@ output stage is 16-bit regardless — nobody has ever filed a bug about it. A fi
 turns out to be unplayable costs a silent skip or a track that won't start, on hardware with no error
 reporting, where the user cannot tell what went wrong or that the app is even involved.
 
-Concretely: `maxSampleRate` stays at 44100 even though iPod classic is documented to 48 kHz, and
-even though hardware testing on an iPod Photo found both 48 kHz AAC and 24-bit/48 kHz ALAC playing
-cleanly. The original finding that motivated 44.1 kHz was *intermittent skipping across a full
+Concretely: `AudioFormat.baseSampleRate` stays at 44100 even though iPod classic is documented to
+48 kHz, and even though hardware testing on an iPod Photo found both 48 kHz AAC and 24-bit/48 kHz
+ALAC playing cleanly. The original finding that motivated 44.1 kHz was *intermittent skipping across a full
 album*, and a short clip playing correctly cannot disprove that. 24-bit lossless is likewise
 re-encoded even where it plays, because the output pipeline is 16-bit either way.
 
@@ -211,42 +211,71 @@ models — not the presence of success in a short test. Adding a threshold needs
 than removing one.
 
 What *is* allowed is letting a user who knows their own hardware opt out per-install, which is what
-`ConversionProfile` does (Settings ▸ Conversion). Three levels, default first, each a superset of
-the last: 44.1 kHz/16-bit, then 48 kHz, then 48 kHz + 24-bit lossless. The looser two correspond to
-bench tests F and B in `agent_space/ipod-test-files/results.txt`, which passed on an iPod Photo.
-Two rules hold at every level, because they're not "probably fine" cases: **96 and 192 kHz are
-always converted** (tests C and D refused to play outright), and **HE-AAC is never passed through**
+`ConversionCeiling` does (Settings ▸ Conversion). Four rungs, default first, ordered by quality:
+`aac44`, `aac48`, `alac44`, `alac48`. They correspond to bench tests E/F/A/B in
+`agent_space/ipod-test-files/results.txt`, all of which passed on an iPod Photo.
+
+It is a **ceiling, not a target**. Material above it comes down to it; material below it is left
+alone. That is why a 22 kHz AAC or a 128 kbps MP3 passes every rung untouched. "Above" means *out of
+spec* — sample rate, bit depth, HE-AAC — and deliberately **not** bitrate: a 320 kbps MP3 is never
+re-encoded under `aac44`, because lossy-to-lossy transcoding costs quality to save a little space.
+MP3 is not probed at all, which would otherwise dominate scan cost.
+
+Two rules hold at every rung, because they aren't "probably fine" cases: **96 and 192 kHz are always
+converted** (tests C and D refused to play outright), and **HE-AAC is never passed through**
 (click-wheel decoders predate SBR, so the file plays audibly wrong rather than merely over-spec).
-The default must stay `.maximumCompatibility` — a user who can't tell whether their model is
-affected has to land on the safe behaviour without choosing it.
+The default must stay `.aac44` — a user who can't tell whether their model is affected has to land
+on the safe behaviour without choosing it.
+
+**Lossy sources never become lossless.** `targetCodec(sourceIsLossless:)` routes FLAC/APE/ALAC to
+the ceiling's codec and everything else to AAC regardless. A 128 kbps OGG re-encoded as ALAC would
+be roughly six times larger and recover nothing — the detail was discarded at the original encode.
+Raising the ceiling raises a limit; it cannot put back what was never there.
 
 ## Constraints that break real hardware if changed casually
 
 - **afconvert flags** (`ConversionService.export`): `-s 2` (constrained VBR, not `-s 3`), and
-  `aac@<rate>` where the rate comes from `ConversionProfile.encodeRate(sourceRate:)` — 44100 unless
+  `aac@<rate>` where the rate comes from `ConversionCeiling.encodeRate(sourceRate:)` — 44100 unless
   the user opted up. True VBR breaks seeking on an iPod Photo; passing hi-res sources through at
   48/96 kHz causes playback skipping. Any change to encoder settings must bump
   `ConversionService.cacheVersion`, which invalidates every cached `.m4a` in the hidden `.mypod/`
   folders.
-- **Cached output is keyed by the rate it was encoded at**, not by the profile — `CacheLocation`
-  appends `-48` to the directory (`v9-48/`) or filename (`Track-48.m4a`) for anything that isn't
-  44.1 kHz, and appends nothing at 44.1. Both halves matter. No suffix at 44.1 means upgrading to a
-  build that has this setting strands nothing. Keying on rate rather than profile means a 44.1 kHz
-  source resolves to the same path under every profile — its output is byte-identical either way —
-  so switching profiles to spare a handful of hi-res files doesn't re-transcode the whole library.
+- **ALAC output needs two afconvert passes and there is no way around it.** afconvert exposes no
+  bit-depth flag for ALAC and defaults to *32-bit* source data, so a direct `-d alac@44100` yields a
+  32-bit file — larger than a 24-bit original, and out of spec by this app's own rules. Even a
+  16-bit FLAC comes back 32-bit. The pipeline is therefore `-d LEI16@<rate>` to a `.caf`, then
+  `-d alac` from that. Verified: a 24-bit/96 kHz source lands at exactly the byte count of bench
+  file A, the known-good 16-bit/44.1 kHz file. Anything this app encodes is 16-bit regardless of
+  rung — the `alac48` rung's 24-bit allowance is a *passthrough* rule, and the output stage is
+  16-bit anyway.
+- **Cached output is NOT keyed by the ceiling, and clearing on change is load-bearing.** Only one
+  format is cached at a time. A ceiling change that skipped the clear would leave every converted
+  file sitting at exactly the path the new ceiling looks in; `isUpToDate` compares mtimes only, so
+  it would judge them current, `pending()` would report nothing to do, and the sync would ship the
+  old format forever with no error anywhere. `SettingsView.apply()` clears **both** cache locations
+  (a user who has switched location before has files in the other tree too) and only then writes the
+  new value.
 - **`encodeRate` never resamples upward and prefers halving to clamping**: 96 → 48 and 88.2 → 44.1
   are exact 2:1 decimations where 88.2 → 48 would not be. `agent_space/crackle-test` measured
   intersample overshoot nearly tripling through a rate conversion, so staying inside a rate family
   is worth the extra branch. An unknown source rate (0) falls back to 44.1, never upward.
-- **Changing the profile requires a rescan, not just a refresh.** `needsConversion` is decided at
+- **Changing the ceiling requires a rescan, not just a refresh.** `needsConversion` is decided at
   scan time and baked into `LibraryTrack`, so `MusicLibraryStore` rescans on
-  `ConversionProfile.didChange`. It also rebuilds `conversionForEstimates` — `ConversionService`
-  captures the location and profile at init, so a long-lived instance answers "is this cached?"
+  `ConversionCeiling.didChange`. It also rebuilds `conversionForEstimates` — `ConversionService`
+  captures the location and ceiling at init, so a long-lived instance answers "is this cached?"
   against wherever the cache used to be.
-- **Conversion is decided by contents, not extension** (`AudioFormat.needsConversion(_:probe:)` +
-  `AudioProbe`). `.m4a` covers both 256 kbps AAC and 24-bit/96 kHz ALAC, so `LibraryScanner` opens
-  natively wrapped files and re-encodes them when they exceed `AudioFormat.maxSampleRate` (44100),
-  are lossless above 16-bit, or carry an HE-AAC layer. Two traps: **HE-AAC only shows up in
+- **Size estimates must follow the ceiling.** `estimatedIPodBytes` branches on `targetCodec`, and
+  the two differ by roughly 3×. The AAC path multiplies duration by `aacBitRate`; the ALAC path has
+  no bitrate to multiply by, so it derives raw PCM from the *target* rate at 16-bit stereo and
+  scales by `alacPCMRatio` (0.65, the pessimistic end of ALAC's real 0.50–0.70, erring toward
+  headroom like `vbrOverheadFactor`). Getting this wrong is not cosmetic: `addedBytes` feeds
+  `SyncPlan.shortfallBytes`, so an under-report makes `fits` return true and the device fills up
+  partway through the add phase, *after* removals have run.
+- **Conversion is decided by contents, not extension**
+  (`AudioFormat.needsConversion(_:probe:ceiling:)` + `AudioProbe`). `.m4a` covers both 256 kbps AAC
+  and 24-bit/96 kHz ALAC, so `LibraryScanner` opens natively wrapped files and re-encodes them when
+  they exceed `ceiling.maxSampleRate`, are lossless deeper than `ceiling.maxBitDepth`, or carry an
+  HE-AAC layer. The same probe also decides `isLossless`, which picks the target codec. Two traps: **HE-AAC only shows up in
   `kAudioFilePropertyFormatList`** — the data format reports a plain half-rate `aac` core, so
   checking `formatID` alone silently misses it, and the effective sample rate is the max across
   layers rather than the core's; and `mBitsPerChannel` is 0 for ALAC, whose depth lives in

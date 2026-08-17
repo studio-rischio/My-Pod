@@ -21,40 +21,47 @@ struct SettingsView: View {
 /// this and conclude "leave it alone", which is why the default sits first and
 /// the warning is attached to the choice rather than buried in a help tag.
 private struct ConversionSettingsView: View {
-    @State private var profile: ConversionProfile = .current
-    /// What the profile was when this pane opened. Switching away and back
-    /// shouldn't keep claiming a rescan is coming.
-    @State private var initial: ConversionProfile = .current
+    /// What the picker shows. Only written back to defaults once the user has
+    /// confirmed, so cancelling a change snaps the radio button back.
+    @State private var ceiling: ConversionCeiling = .current
+    /// The change awaiting confirmation, if any.
+    @State private var proposed: ConversionCeiling?
+
+    private var libraryRoot: URL? {
+        UserDefaults.standard.string(forKey: "MyPod.libraryRoot").map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Audio quality limits")
+                Text("Quality ceiling")
                     .font(.headline)
 
-                Text("Click-wheel iPods play a narrower range of audio than their specs suggest, and give no error when a file is out of range — the track just skips. My Pod re-encodes anything outside the range it trusts.")
+                Text("Click-wheel iPods play a narrower range of audio than their specs suggest, and give no error when a file is out of range — the track just skips. Music above this limit is converted down to it. Music below it is left exactly as it is.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Picker("", selection: $profile) {
-                    ForEach(ConversionProfile.allCases) { option in
-                        Text("\(option.title) — \(option.summary)").tag(option)
+                Picker("", selection: $ceiling) {
+                    ForEach(ConversionCeiling.allCases) { option in
+                        Text(option.title).tag(option)
                     }
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
 
-                Text(profile.detail)
+                Text(ceiling.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if profile != .maximumCompatibility {
+            if ceiling != .aac44 {
                 Label(
-                    "If tracks start skipping or refusing to play, switch back to maximum compatibility and sync again. 96 and 192 kHz music is always re-encoded — those don't play on any click-wheel iPod.",
+                    "If tracks start skipping or refusing to play, drop back to 44.1 kHz AAC and sync again. 96 and 192 kHz music is converted whatever you pick — those don't play on any click-wheel iPod.",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
@@ -65,17 +72,52 @@ private struct ConversionSettingsView: View {
             Divider()
 
             Label(
-                profile == initial
-                    ? "Changing this rescans your library and may change how much space a sync needs. Music already converted at another setting is kept, so switching back is instant."
-                    : "Your library is being rescanned. Music that no longer needs converting will sync from the original file on the next sync.",
-                systemImage: profile == initial ? "info.circle" : "arrow.clockwise"
+                "\(ceiling.sizeNote) Changing this deletes the converted files and re-encodes them, since only one format is kept at a time. Your original music is never touched.",
+                systemImage: "info.circle"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 4)
-        .onChange(of: profile) { _, new in ConversionProfile.setCurrent(new) }
+        .onChange(of: ceiling) { old, new in
+            guard new != ConversionCeiling.current else { return }
+            proposed = new
+            // Snap back for now; `apply` puts it where it belongs on confirm.
+            ceiling = old
+        }
+        .confirmationDialog(
+            "Change the quality ceiling to \(proposed?.title ?? "")?",
+            isPresented: Binding(get: { proposed != nil }, set: { if !$0 { proposed = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Change and Re-encode", role: .destructive) { apply() }
+            Button("Cancel", role: .cancel) { proposed = nil }
+        } message: {
+            Text("Music already converted will be deleted and encoded again at the new setting, which takes a few seconds per track during the next sync. Your original files aren't touched.")
+        }
+    }
+
+    /// Clearing is not housekeeping — it's what makes the change take effect.
+    ///
+    /// Converted files aren't keyed by the ceiling, so anything left behind sits
+    /// at exactly the path the new ceiling will look in, and `isUpToDate` would
+    /// judge it current because it's newer than its source. The sync would go on
+    /// shipping the old format indefinitely with nothing reported as pending.
+    ///
+    /// Both locations are cleared, not just the active one: a user who has
+    /// switched cache location before has files in the other tree too, and those
+    /// would become wrong-format landmines the next time they switched back.
+    private func apply() {
+        guard let target = proposed else { return }
+        proposed = nil
+        CacheInventory.clearAppSupport()
+        CacheInventory.clearBesideMusic(libraryRoot: libraryRoot)
+        ConversionCeiling.setCurrent(target)
+        ceiling = target
+        // The ceiling's own notification triggers the rescan; this one tells
+        // anything watching the cache that its size numbers are now zero.
+        NotificationCenter.default.post(name: CacheLocation.didChange, object: nil)
     }
 }
 
@@ -127,7 +169,7 @@ private struct CacheSettingsView: View {
             Text("Where converted files are kept")
                 .font(.headline)
 
-            Text("Music the iPod can't play — FLAC, OGG and the rest — is converted to AAC and kept so it's only ever encoded once.")
+            Text("Music the iPod can't play — FLAC, OGG and the rest — is converted and kept so it's only ever encoded once.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -32,7 +32,7 @@ struct ConversionSectionView: View {
                         .monospacedDigit()
                         .font(.callout)
                 }
-                .help("FLAC, OGG, Opus, WMA and APE files, plus any AAC or ALAC whose contents are out of spec for the iPod. Cached conversions are reused; pending ones are encoded during the next sync unless you pre-convert them here.")
+                .help("FLAC, OGG, Opus, WMA and APE files, plus any AAC or ALAC whose contents are above the quality ceiling set in Settings. Cached conversions are reused; pending ones are encoded during the next sync unless you pre-convert them here.")
 
                 switch store.conversionState {
                 case .idle, .finished:

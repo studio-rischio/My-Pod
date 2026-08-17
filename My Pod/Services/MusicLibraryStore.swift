@@ -172,6 +172,11 @@ final class MusicLibraryStore {
         if let stored = defaults.array(forKey: selectionKey) as? [String] {
             self.selectedTrackPaths = Set(stored)
         }
+        // Before anything reads the cache. 1.5 kept output from different sample
+        // rates side by side under suffixed paths; this version keeps one format
+        // and clears on change, so a 1.5 install that had raised its limits is
+        // holding files at paths the new rules would misread.
+        ConversionCeiling.migrate(libraryRoot: libraryRoot)
         // `allLibraryPaths` is still empty here, so `.entireLibrary` resolves to
         // nothing until the scan lands and recomputes — which is correct: there
         // is no library yet to select all of.
@@ -187,12 +192,12 @@ final class MusicLibraryStore {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.cacheLayoutChanged() }
         }
-        // A profile change is the stronger signal of the two: which tracks need
+        // A ceiling change is the stronger signal of the two: which tracks need
         // converting at all is decided during the scan and baked into
         // `LibraryTrack.needsConversion`, so refreshing estimates isn't enough —
         // the library has to be classified again from scratch.
         NotificationCenter.default.addObserver(
-            forName: ConversionProfile.didChange,
+            forName: ConversionCeiling.didChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in

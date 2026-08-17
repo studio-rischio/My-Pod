@@ -12,7 +12,7 @@ Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI in
 - **Library mirroring** — pick a Plex-structured folder (`Root/Artist/Album/Track`) and either sync all of it or check the artists, albums and tracks you want. Sync is a two-way mirror: checked music is added, unchecked music is removed.
 - **New-music highlighting** — anything in your library that isn't on the iPod is marked with a dot, rolled up onto album and artist rows, and counted in the toolbar.
 - **Selection details** — click an artist, album or track and the panel beside the library tells you what it is: cover art, formats, sizes on disk and on the iPod, what's been converted, and what's already on the device. Shift-click to roll several together.
-- **Transcoding** — FLAC, OGG, Opus, WMA and APE are converted to AAC 256 kbps `.m4a` via `afconvert` and cached, so a given file is only ever encoded once. The cache lives outside your music library by default; Settings ▸ Cache can put it back beside the music, shows what it's using, and clears it. Files that are *already* AAC or ALAC get checked rather than trusted: hi-res, 24-bit and HE-AAC ones are re-encoded too, since a click-wheel iPod skips or muffles them.
+- **Transcoding** — FLAC, OGG, Opus, WMA and APE are converted via `afconvert` and cached, so a given file is only ever encoded once. AAC 256 kbps by default; Settings ▸ Conversion can raise the ceiling to Apple Lossless, which keeps lossless music lossless. The cache lives outside your music library by default; Settings ▸ Cache can put it back beside the music, shows what it's using, and clears it. Files that are *already* AAC or ALAC get checked rather than trusted: hi-res, 24-bit and HE-AAC ones are re-encoded too, since a click-wheel iPod skips or muffles them.
 - **Cover art** — artwork is located per album and written into the iPod's database as rendered thumbnails.
 - **Playlists** — read from a folder of plain `.m3u` files. Checking a playlist syncs the tracks it contains, so you can put music on the iPod by playlist alone.
 - **Capacity checking** — the storage bar previews what a sync will add and free before you run it, and a sync that wouldn't fit is refused with the shortfall named rather than failing partway through.
@@ -158,11 +158,24 @@ Swift talks to libgpod through `IPodKit/ipod-api.c`, a small C wrapper that keep
 
 **Where converted files go.** By default `~/Library/Application Support/My Pod`, so your music folders are never written to — which matters if your library is read-only, on a network share, or synced by something like Dropbox. Settings ▸ Cache can instead keep each conversion in a hidden `.mypod/` folder beside its source, which means the cache survives moving or renaming your library, at the cost of writing into it. Either way the same tab reports what each location is using and can empty it.
 
-**What counts as playable.** A file extension isn't proof — `.m4a` covers both 256 kbps AAC and 24-bit/96 kHz ALAC, and only one of those plays properly. Natively wrapped files are opened and inspected, and re-encoded when their contents are out of spec: above 44.1 kHz, lossless above 16-bit, or any HE-AAC — the first two adjustable in Settings ▸ Conversion, the last never, since a click-wheel decoder plays HE-AAC audibly wrong rather than not at all. HE-AAC has to be read out of the codec layer list, because such a file reports itself as an ordinary half-rate AAC stream and would otherwise slip through and play back muffled. MP3s are exempt from the check, since the format can't exceed what the hardware handles.
+**What counts as playable.** A file extension isn't proof — `.m4a` covers both 256 kbps AAC and 24-bit/96 kHz ALAC, and only one of those plays properly. Natively wrapped files are opened and inspected, and re-encoded when their contents are above the ceiling: too high a sample rate, lossless too deep, or any HE-AAC — the first two adjustable in Settings ▸ Conversion, the last never, since a click-wheel decoder plays HE-AAC audibly wrong rather than not at all. HE-AAC has to be read out of the codec layer list, because such a file reports itself as an ordinary half-rate AAC stream and would otherwise slip through and play back muffled. MP3s are exempt from the check, since the format can't exceed what the hardware handles.
 
 **Why it converts more than it strictly has to.** Those rules are deliberately conservative, and some files that get re-encoded would probably have played fine. That's the intended trade. An unnecessary re-encode costs a little quality on a device whose output stage is 16-bit anyway; a file that turns out to be unplayable costs a track that silently skips or refuses to start, with nothing on screen to explain why. Testing on an iPod Photo, for example, found 48 kHz files playing cleanly — but the original reason for forcing 44.1 kHz was *intermittent* skipping over a full album, which a short test can't rule out. So that's where the default sits.
 
-**Raising the limits.** If you know your iPod handles more, Settings ▸ Conversion offers two looser levels: 48 kHz, and 48 kHz plus 24-bit lossless. Both were verified on an iPod Photo; older models have been reported to skip at 48 kHz, so this is opt-in rather than automatic. Music at 96 and 192 kHz is always converted whatever you pick — those refuse to play outright. Switching rescans your library, and conversions made at another setting are kept, so changing your mind is instant.
+**The quality ceiling.** Settings ▸ Conversion sets the highest quality My Pod will put on the iPod, and it works as a ceiling rather than a target: music above it is brought down to it, music below it is left exactly as it is. A 128 kbps MP3 stays a 128 kbps MP3 at every setting — re-encoding it would cost quality to gain nothing.
+
+| Setting | What it does |
+|---|---|
+| **AAC 256 kbps · 44.1 kHz** | Default. The one every click-wheel iPod is known to handle. |
+| **AAC 256 kbps · 48 kHz** | 48 kHz files play as-is instead of being re-encoded. |
+| **Apple Lossless · 16-bit / 44.1 kHz** | FLAC and other lossless music stays lossless — roughly 3× larger on the iPod. |
+| **Apple Lossless · 24-bit / 48 kHz** | Also passes 24-bit lossless through untouched. |
+
+Everything above the default was verified on an iPod Photo; older models have been reported to skip at 48 kHz, so raising it is opt-in. Music at 96 and 192 kHz is converted whatever you pick — that refuses to play outright.
+
+Lossy music (OGG, Opus, WMA) always becomes AAC, even under a lossless setting: converting it to Apple Lossless would make it several times larger and recover nothing, because the detail was discarded when it was first encoded.
+
+Only one format is cached at a time, so changing this deletes the converted files and encodes them again — My Pod asks first. Your original music is never touched.
 
 The goal is that a sync always works by default, not that it extracts every last bit of fidelity the hardware can theoretically manage. If you'd rather have the latter, [Rockbox](https://www.rockbox.org) replaces the iPod's firmware and plays considerably more than the stock software will.
 

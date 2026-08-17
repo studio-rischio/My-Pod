@@ -31,14 +31,28 @@ nonisolated enum AudioFormat {
     // that arrive already encoded. These rules re-encode a natively-wrapped
     // file when its actual contents are out of spec.
 
-    /// Above this, playback skips on click-wheel hardware — the same finding
-    /// that pins the encoder to `aac@44100` by default.
+    /// The rate every click-wheel iPod is known to handle, and what an unknown
+    /// or untrusted case falls back to.
     ///
-    /// This is the conservative floor, not the rate actually applied: a user can
-    /// raise the ceiling to 48 kHz in Settings ▸ Conversion, so the rules below
-    /// take a `ConversionProfile` and read `profile.maxSampleRate`. This
-    /// constant remains what an unknown or untrusted case falls back to.
-    static let maxSampleRate = 44_100
+    /// Not the rate actually applied: a user can raise the ceiling to 48 kHz in
+    /// Settings ▸ Conversion, so the rules below take a `ConversionCeiling` and
+    /// read `ceiling.maxSampleRate`.
+    static let baseSampleRate = 44_100
+
+    /// Lossless source extensions. Determines the *target* codec under a
+    /// lossless ceiling: only these follow it, because re-encoding lossy
+    /// material to ALAC inflates it without recovering anything. `m4a` is
+    /// absent deliberately — it covers both AAC and ALAC, so it needs the probe
+    /// rather than the extension.
+    static let losslessExtensions: Set<String> = [
+        "flac", "ape", "alac", "wav", "aiff", "aif"
+    ]
+
+    /// Whether the source is lossless, by extension and then by contents.
+    static func isLossless(_ ext: String, probe: AudioProbe.Format?) -> Bool {
+        if let probe { return losslessFormats.contains(probe.formatID) }
+        return losslessExtensions.contains(ext.lowercased())
+    }
 
     /// Lossless formats above 16-bit. Click-wheel firmware is a 16-bit
     /// pipeline, so 24-bit ALAC and 24-bit PCM belong here even at 44.1 kHz.
@@ -70,15 +84,20 @@ nonisolated enum AudioFormat {
         probeable.contains(ext.lowercased())
     }
 
-    static func isIPodPlayable(_ format: AudioProbe.Format, profile: ConversionProfile) -> Bool {
+    /// Whether a natively-wrapped file can be left exactly as it is.
+    ///
+    /// Only ever asks whether the file is *above* the ceiling. Something below
+    /// it — a 128 kbps MP3, a 32 kHz AAC — passes, because the iPod plays it
+    /// and re-encoding upward would cost quality to gain nothing.
+    static func isIPodPlayable(_ format: AudioProbe.Format, ceiling: ConversionCeiling) -> Bool {
         // 0 means CoreAudio wouldn't say; don't re-encode on a guess.
-        if format.sampleRate > profile.maxSampleRate { return false }
-        // HE-AAC is never passed through at any profile. It isn't a rate or
-        // depth question — click-wheel decoders predate SBR and play the
-        // half-rate core, so the file is audibly wrong rather than merely
-        // over-spec, and no amount of user opt-in changes that.
+        if format.sampleRate > ceiling.maxSampleRate { return false }
+        // HE-AAC is never passed through, at any ceiling. It isn't a rate or
+        // depth question — click-wheel decoders predate SBR and play only the
+        // half-rate core, so the file comes out audibly wrong rather than
+        // merely over-spec, and no amount of user opt-in changes that.
         if !format.layers.isDisjoint(with: unplayableAACProfiles) { return false }
-        if losslessFormats.contains(format.formatID), format.bitDepth > 16, !profile.allows24BitLossless {
+        if losslessFormats.contains(format.formatID), format.bitDepth > ceiling.maxBitDepth {
             return false
         }
         return true
@@ -86,10 +105,10 @@ nonisolated enum AudioFormat {
 
     /// Extension check first, then contents. A nil probe (unreadable, DRM'd,
     /// or an extension we don't inspect) leaves the extension's verdict alone.
-    static func needsConversion(_ ext: String, probe: AudioProbe.Format?, profile: ConversionProfile) -> Bool {
+    static func needsConversion(_ ext: String, probe: AudioProbe.Format?, ceiling: ConversionCeiling) -> Bool {
         if needsConversion(ext) { return true }
         guard let probe else { return false }
-        return !isIPodPlayable(probe, profile: profile)
+        return !isIPodPlayable(probe, ceiling: ceiling)
     }
 }
 
@@ -117,10 +136,18 @@ nonisolated struct LibraryTrack: Sendable, Identifiable, Hashable {
     let durationMS: Int
     /// Source sample rate in Hz, or 0 when unknown. Populated on the same terms
     /// as `durationMS` — only for tracks we'll convert, only where the header
-    /// gives it up cheaply. `ConversionProfile.encodeRate(sourceRate:)` uses it
-    /// to avoid resampling a 44.1 kHz source up to the profile's ceiling, which
-    /// would cost size and add intersample overshoot for nothing.
+    /// gives it up cheaply. `ConversionCeiling.encodeRate(sourceRate:)` uses it
+    /// to avoid resampling a 44.1 kHz source up to the ceiling, which would cost
+    /// size and add intersample overshoot for nothing.
     let sampleRate: Int
+    /// Source bit depth, or 0 when unknown. Same terms as `sampleRate`. Used
+    /// only to size lossless output, where the delivered bytes scale with depth
+    /// and rate rather than with a bitrate.
+    let bitDepth: Int
+    /// Whether the source is lossless. Decides the *target* codec under a
+    /// lossless ceiling: lossy material always becomes AAC, since encoding it
+    /// to ALAC would inflate it several-fold and recover nothing.
+    let isLossless: Bool
 
     var displayName: String {
         trackNumber > 0 ? String(format: "%02d. %@", trackNumber, title as NSString) : title

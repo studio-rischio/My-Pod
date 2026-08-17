@@ -15,36 +15,46 @@ nonisolated enum FLACHeader {
     /// Bytes of header we need: 4 magic + 4 block header + 18 into STREAMINFO.
     private static let headerLength = 26
 
-    /// Sample rate and playing time in one read. Either field is 0 when the file
-    /// isn't a well-formed FLAC or STREAMINFO didn't state it.
-    static func streamInfo(of url: URL) -> (sampleRate: Int, durationMS: Int) {
-        guard url.pathExtension.lowercased() == "flac" else { return (0, 0) }
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return (0, 0) }
+    nonisolated struct StreamInfo: Sendable, Equatable {
+        var sampleRate = 0
+        var bitDepth = 0
+        var durationMS = 0
+    }
+
+    /// Sample rate, bit depth and playing time in one read. Any field is 0 when
+    /// the file isn't a well-formed FLAC or STREAMINFO didn't state it.
+    static func streamInfo(of url: URL) -> StreamInfo {
+        guard url.pathExtension.lowercased() == "flac" else { return StreamInfo() }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return StreamInfo() }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: headerLength),
-              data.count == headerLength else { return (0, 0) }
+              data.count == headerLength else { return StreamInfo() }
 
         let bytes = [UInt8](data)
         guard bytes[0] == 0x66, bytes[1] == 0x4C, bytes[2] == 0x61, bytes[3] == 0x43 else {
-            return (0, 0)   // not "fLaC"
+            return StreamInfo()   // not "fLaC"
         }
         // Low 7 bits of the block header are the block type; 0 = STREAMINFO.
-        guard bytes[4] & 0x7F == 0 else { return (0, 0) }
+        guard bytes[4] & 0x7F == 0 else { return StreamInfo() }
 
-        // STREAMINFO body starts at byte 8. Sample rate and total sample count
-        // begin 10 bytes in, packed as:
+        // STREAMINFO body starts at byte 8. Sample rate, channels, bits per
+        // sample and total sample count begin 10 bytes in, packed as:
         //   20 bits sample rate | 3 bits channels-1 | 5 bits bps-1 | 36 bits samples
         var packed: UInt64 = 0
         for byte in bytes[18..<26] {
             packed = (packed << 8) | UInt64(byte)
         }
         let sampleRate = packed >> 44
+        let bitDepth = ((packed >> 36) & 0x1F) &+ 1     // stored as bps-1
         let totalSamples = packed & 0x0F_FFFF_FFFF
 
-        guard sampleRate > 0 else { return (0, 0) }
-        // A rate with no sample count still tells the encoder what to target.
-        guard totalSamples > 0 else { return (Int(sampleRate), 0) }
-        return (Int(sampleRate), Int((totalSamples &* 1000) / sampleRate))
+        guard sampleRate > 0 else { return StreamInfo() }
+        return StreamInfo(
+            sampleRate: Int(sampleRate),
+            bitDepth: Int(bitDepth),
+            // A rate with no sample count still tells the encoder what to target.
+            durationMS: totalSamples > 0 ? Int((totalSamples &* 1000) / sampleRate) : 0
+        )
     }
 
     static func durationMS(of url: URL) -> Int {

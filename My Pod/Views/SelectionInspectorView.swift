@@ -213,7 +213,7 @@ struct SelectionInspectorView: View {
             Divider().padding(.vertical, 2)
 
             if d.track.needsConversion {
-                row("On iPod as", "AAC 256 kbps")
+                row("On iPod as", d.targetFormat)
                 row(d.convertedBytes == nil ? "Will be" : "Converted", byteCount(d.deliveredBytes))
                 if d.convertedBytes == nil {
                     Text("Not converted yet — this size is an estimate.")

@@ -40,6 +40,11 @@ nonisolated struct TrackDetail: Sendable, Equatable {
     var deliveredBytes: UInt64
     var isOnIPod: Bool?
     var isChecked: Bool
+    /// What this track becomes on the device. Carried rather than inferred: the
+    /// answer depends on the quality ceiling *and* on whether the source is
+    /// lossless, and the view has no business knowing either rule.
+    var targetFormat: String = ""
+
 
     var albumDirectory: URL { track.url.deletingLastPathComponent() }
 }
@@ -92,7 +97,8 @@ nonisolated enum SelectionInspector: Sendable {
                 track: track,
                 deliveredBytes: conversion.estimatedIPodBytes(for: track),
                 isOnIPod: iPodKeys.map { $0.contains(TrackKey(library: track)) },
-                isChecked: checkedPaths.contains(track.url.path)
+                isChecked: checkedPaths.contains(track.url.path),
+                targetFormat: conversion.targetFormatDescription(for: track)
             )
             guard track.needsConversion else { return detail }
             let url = conversion.iPodPlayableURL(for: track)
