@@ -158,18 +158,49 @@ Four layers, bottom-up:
 3. **`My Pod/Models/IPodDevice.swift`** — a Swift `actor` wrapping `IPodDB*`, one method per C call,
    converting `IPodResult` into thrown `IPodError`s and freeing every returned C string.
 4. **Services + Views** — ordinary Swift/SwiftUI. `IPodController` (@MainActor @Observable) owns the
-   device lifecycle; `ContentView` wires the four stores together and passes state down.
+   device lifecycle; `ContentView` wires the stores together and passes state down.
 
 Data flow for a sync: `VolumeWatcher` (mount notifications) → `IPodController.load` → `IPodDevice`
 actor → `SyncEngine.plan` diffs the library against the device → `SyncSheetView` confirms →
 `SyncEngine.execute` runs phases convert → remove → add → playlists → save.
 
+**The long-lived stores are owned by `My_PodApp`, not `ContentView`, and must stay there.**
+`@State private var x = Thing()` evaluates `Thing()` on *every* init of the enclosing struct and
+discards all but the first. A View struct is re-inited on every redraw; an App struct is built once.
+While these lived in `ContentView`, each redraw constructed and threw away an `IPodController`, a
+`PlaylistStore` reload and a **full library scan** — measured at 126 scans in one launch of a
+2,895-track library, pegging a core. Moving one back into a view reintroduces that silently: nothing
+misbehaves, it's just permanently busy.
+
+### Per-device profiles
+
+Which iPod is attached decides the quality ceiling **and** the sync selection — an 8 GB nano can't
+hold what a modded 256 GB classic does at any codec. `DeviceProfileStore.shared` (shared because
+Settings is a separate scene that can't reach the main window's state) resolves the connected device
+to a `DeviceProfile`; `ContentView` pushes that to `MusicLibraryStore.activate` and
+`PlaylistStore.activate`. There is always exactly one active profile — the reserved *default* one
+whenever nothing is connected, whose ceiling **is** `ConversionCeiling.current`.
+
+Identity is a chain of namespaced tiers, matched on any identifier the device has ever presented:
+`fw:` (libgpod's FirewireGuid, which survives My Pod's own reset but not a Disk Utility reformat),
+then `vol:` (volume UUID), then `name:` (volume name + capacity). The weak `name:` tier only matches
+profiles that have never carried a `fw:`, which deliberately gives a Disk-Utility-reformatted iPod a
+fresh profile rather than risk merging two different devices into one — a wrong merge corrupts both
+selections and isn't recoverable; a spurious new profile is.
+
+Selections live under `MyPod.profile.<uuid>.*` keys rather than inside the profile record: they're
+thousands of paths rewritten on every checkbox click, and holding them in the shared blob would
+rewrite every device's state to save one. The UUID is internal and stable, so a device that changes
+identity tier keeps its selection. `MusicLibraryStore.activate` must **not** intersect the incoming
+selection against the scanned library — an iPod can connect before the first scan lands, and
+intersecting against an empty library silently deletes and then persists an empty selection.
+
 ### Concurrency model
 
 The project sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so **every type is main-actor-isolated
 unless marked `nonisolated`**. That is why value types touched by background work (`TrackKey`,
-`TrackInfo`, `LibraryTrack`/`MusicLibrary`, `AudioFormat`, `ConversionService`, `LibraryScanner`,
-`Log`) carry an explicit `nonisolated`. Adding a type that the scanner, conversion service, or the
+`TrackInfo`, `LibraryTrack`/`MusicLibrary`/`SourceFormat`, `AudioFormat`, `ConversionService`,
+`LibraryScanner`, `DeviceProfile`, `Log`) carry an explicit `nonisolated`. Adding a type that the scanner, conversion service, or the
 `IPodDevice` actor constructs means marking it `nonisolated` too.
 
 ### Track identity (`TrackKey`)
@@ -240,6 +271,13 @@ Raising the ceiling raises a limit; it cannot put back what was never there.
   48/96 kHz causes playback skipping. Any change to encoder settings must bump
   `ConversionService.cacheVersion`, which invalidates every cached `.m4a` in the hidden `.mypod/`
   folders.
+- **`maxConcurrent` is *not* in that category** — it's a tuning constant, and it now scales with the
+  machine (`max(2, min(8, activeProcessorCount / 2))`). It was a flat 2, defended by a claim that
+  afconvert can't tolerate more than ~4 concurrent instances. That was wrong: the exclusivity it
+  cited is an iOS hardware-codec concept and macOS AAC encoding is the software codec, and
+  measurement found zero failures at 32. Scaling is near-linear to 8 and rolls off after, so the cap
+  is politeness rather than safety. Numbers in `agent_space/bench-conversion.md`; changing it needs
+  **no** `cacheVersion` bump, since the output bytes are identical.
 - **ALAC output needs two afconvert passes and there is no way around it.** afconvert exposes no
   bit-depth flag for ALAC and defaults to *32-bit* source data, so a direct `-d alac@44100` yields a
   32-bit file — larger than a 24-bit original, and out of spec by this app's own rules. Even a
@@ -248,22 +286,32 @@ Raising the ceiling raises a limit; it cannot put back what was never there.
   file A, the known-good 16-bit/44.1 kHz file. Anything this app encodes is 16-bit regardless of
   rung — the `alac48` rung's 24-bit allowance is a *passthrough* rule, and the output stage is
   16-bit anyway.
-- **Cached output is NOT keyed by the ceiling, and clearing on change is load-bearing.** Only one
-  format is cached at a time. A ceiling change that skipped the clear would leave every converted
-  file sitting at exactly the path the new ceiling looks in; `isUpToDate` compares mtimes only, so
-  it would judge them current, `pending()` would report nothing to do, and the sync would ship the
-  old format forever with no error anywhere. `SettingsView.apply()` clears **both** cache locations
-  (a user who has switched location before has files in the other tree too) and only then writes the
-  new value.
+- **Cached output IS keyed by the ceiling, and collecting the unreferenced ones is load-bearing.**
+  The quality setting is per-iPod, so two devices attached to the same library need two formats warm
+  at once — hence `Converted/v9/<ceiling>/…` and `.mypod/<ceiling>/…`. That is *not* a return to 1.5,
+  which keyed by sample rate and kept copies no one consumed. Here every cached ceiling is owned by a
+  device profile, and `CacheInventory.collectUnused` deletes any that no profile references, at
+  launch and after every profile change. Skip that and trying all four rungs leaves four encodings of
+  the library on disk with nothing to say which are live. The consequence to know: switching a device
+  A → B → A **re-encodes**, because A's cache is collected the moment nothing references it. That is
+  the deliberate trade — bounded, predictable disk over a free undo.
 - **`encodeRate` never resamples upward and prefers halving to clamping**: 96 → 48 and 88.2 → 44.1
   are exact 2:1 decimations where 88.2 → 48 would not be. `agent_space/crackle-test` measured
   intersample overshoot nearly tripling through a rate conversion, so staying inside a rate family
   is worth the extra branch. An unknown source rate (0) falls back to 44.1, never upward.
-- **Changing the ceiling requires a rescan, not just a refresh.** `needsConversion` is decided at
-  scan time and baked into `LibraryTrack`, so `MusicLibraryStore` rescans on
-  `ConversionCeiling.didChange`. It also rebuilds `conversionForEstimates` — `ConversionService`
-  captures the location and ceiling at init, so a long-lived instance answers "is this cached?"
-  against wherever the cache used to be.
+- **The scan records what a file *is*, never what should happen to it.** `LibraryTrack.format` is a
+  `SourceFormat` — rate, depth, lossless, HE-AAC, duration — and `needsConversion(under:)` applies a
+  ceiling to it at the point of use. That's what lets one scan serve several iPods at different
+  quality settings, and why changing a ceiling is a recompute rather than a filesystem walk. It costs
+  no extra I/O because the rungs form a ladder: anything in spec at the strictest rung (`.aac44`) is
+  in spec at every rung, so the scanner probes exactly the files it always did. `ConversionService`
+  still captures its ceiling and location at init, so `MusicLibraryStore` rebuilds
+  `conversionForEstimates` whenever either changes — a long-lived instance would answer "is this
+  cached?" against the wrong iPod.
+- **Never give `ceiling:` a default argument.** `ConversionService.init` deliberately requires it.
+  A default would compile, run, and silently answer for the wrong device — and under-reporting a
+  lossless profile's sizes by ~3× is exactly what defeats `SyncPlan.fits` and fills the iPod partway
+  through the add phase, after removals have run.
 - **Size estimates must follow the ceiling.** `estimatedIPodBytes` branches on `targetCodec`, and
   the two differ by roughly 3×. The AAC path multiplies duration by `aacBitRate`; the ALAC path has
   no bitrate to multiply by, so it derives raw PCM from the *target* rate at 16-bit stereo and
@@ -326,6 +374,10 @@ matter. It also gets no README or CLAUDE.md of its own.
 - Persistence is UserDefaults for library root / selection / auto-select state, and plain `.m3u`
   files in `~/Music/MyPodPlaylists/` for playlists. Track selection is stored as file **paths**, not
   URLs, to dodge URL canonicalization mismatches; playlist selection is stored as `Playlist.nameKey`s.
+  Anything per-iPod (track selection, sync mode, playlist selection, offered-once) lives under
+  `MyPod.profile.<uuid>.<name>` — see "Per-device profiles". `autoSelectNewPlaylists` stays global
+  because it's a behaviour preference, not device state. Both migrations off the old app-wide keys
+  are one-shot flags that *copy* rather than move, so downgrading to 1.6 still finds its own keys.
 - Both tabs follow the same selection model: a checkbox per row, an "offered once" set so
   auto-select can't re-check something the user deliberately unchecked, and unchecked means *absent
   from the iPod* — an unchecked playlist that's on the device gets removed by the next sync, exactly

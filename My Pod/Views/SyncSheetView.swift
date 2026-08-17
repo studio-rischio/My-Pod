@@ -82,7 +82,7 @@ struct SyncSheetView: View {
                 summaryRow("Add", count: plan.toAddCount, bytes: plan.addedBytes, color: .accentColor)
                 summaryRow("Remove", count: plan.toRemoveCount, bytes: plan.removedBytes, color: .red)
                 summaryRow("Unchanged", count: plan.unchangedCount, color: .secondary)
-                summaryRow("Convert (→\(ConversionCeiling.current.codec == .alac ? "ALAC" : "AAC"))", count: plan.pendingConversion.count, color: .orange)
+                summaryRow("Convert (→\(engine.conversionService.ceiling.codec == .alac ? "ALAC" : "AAC"))", count: plan.pendingConversion.count, color: .orange)
 
                 playlistSection(plan)
 

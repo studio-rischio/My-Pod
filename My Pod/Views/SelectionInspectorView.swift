@@ -37,7 +37,10 @@ struct SelectionInspectorView: View {
     /// layout does — everything the numbers below depend on.
     private var reloadKey: String {
         let rows = store.highlightedRowIDs.sorted().joined(separator: "|")
-        return "\(rows)#\(store.library.scannedAt.timeIntervalSince1970)#\(store.deviceSnapshot?.bytesByTrackKey.count ?? -1)"
+        // The ceiling is in here because every figure below depends on it —
+        // what converts, what format it lands in, and how big it will be. A
+        // different iPod being plugged in changes all three.
+        return "\(rows)#\(store.library.scannedAt.timeIntervalSince1970)#\(store.deviceSnapshot?.bytesByTrackKey.count ?? -1)#\(store.ceiling.rawValue)"
     }
 
     var body: some View {
@@ -203,8 +206,8 @@ struct SelectionInspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             row("Format", d.track.fileExtension.uppercased())
             row("Size", byteCount(d.track.sizeBytes))
-            if d.track.durationMS > 0 {
-                row("Length", duration(d.track.durationMS))
+            if d.track.format.durationMS > 0 {
+                row("Length", duration(d.track.format.durationMS))
             }
             if d.track.trackNumber > 0 {
                 row("Track", "\(d.track.trackNumber)")
@@ -212,7 +215,7 @@ struct SelectionInspectorView: View {
 
             Divider().padding(.vertical, 2)
 
-            if d.track.needsConversion {
+            if d.track.needsConversion(under: store.ceiling) {
                 row("On iPod as", d.targetFormat)
                 row(d.convertedBytes == nil ? "Will be" : "Converted", byteCount(d.deliveredBytes))
                 if d.convertedBytes == nil {
@@ -330,7 +333,7 @@ struct SelectionInspectorView: View {
         covers = []
         extraAlbums = 0
 
-        let conversion = ConversionService()
+        let conversion = store.conversion
         let checked = store.selectedTrackPaths
         let iPodKeys = store.deviceSnapshot.map { Set($0.bytesByTrackKey.keys) }
         let current = items

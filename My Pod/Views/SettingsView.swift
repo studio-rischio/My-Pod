@@ -8,24 +8,21 @@ struct SettingsView: View {
             CacheSettingsView()
                 .tabItem { Label("Cache", systemImage: "internaldrive") }
         }
-        .frame(width: 520)
+        .frame(width: 520, height: 520)
         .scenePadding()
     }
 }
 
-/// Picks how tightly music is re-encoded before it's synced.
+/// The quality a *new* iPod starts at, plus the list of iPods already known.
 ///
-/// The looser levels are a considered risk, not a hidden power feature, so the
-/// UI says which hardware each was verified on and what going wrong looks like.
-/// A user who can't tell whether their iPod is affected should be able to read
-/// this and conclude "leave it alone", which is why the default sits first and
-/// the warning is attached to the choice rather than buried in a help tag.
+/// A connected iPod's own quality is set in the General tab instead — this is a
+/// separate `Settings {}` scene with no reference to the main window's state, so
+/// a per-device control here would be inert whenever nothing is plugged in,
+/// which is a bad settings pane. What lives here is the value that has meaning
+/// without a device attached.
 private struct ConversionSettingsView: View {
-    /// What the picker shows. Only written back to defaults once the user has
-    /// confirmed, so cancelling a change snaps the radio button back.
-    @State private var ceiling: ConversionCeiling = .current
-    /// The change awaiting confirmation, if any.
-    @State private var proposed: ConversionCeiling?
+    @State private var profiles = DeviceProfileStore.shared
+    @State private var forgetting: DeviceProfile?
 
     private var libraryRoot: URL? {
         UserDefaults.standard.string(forKey: "MyPod.libraryRoot").map {
@@ -34,90 +31,83 @@ private struct ConversionSettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Quality ceiling")
-                    .font(.headline)
-
-                Text("Click-wheel iPods play a narrower range of audio than their specs suggest, and give no error when a file is out of range — the track just skips. Music above this limit is converted down to it. Music below it is left exactly as it is.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Picker("", selection: $ceiling) {
-                    ForEach(ConversionCeiling.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                ConversionCeilingPicker(
+                    subject: "the default quality",
+                    current: ConversionCeiling.current
+                ) { target in
+                    profiles.setCeiling(target, for: DeviceProfile.defaultKey, libraryRoot: libraryRoot)
+                    // Nothing is rescanned any more — which tracks convert is
+                    // decided at sync time now — but the cache just changed
+                    // shape, so size estimates are stale.
+                    NotificationCenter.default.post(name: CacheLocation.didChange, object: nil)
                 }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
 
-                Text(ceiling.detail)
+                Text("Used when no iPod is connected, and as the starting point for an iPod My Pod hasn't seen before. Each iPod's own setting lives in the General tab while it's plugged in.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !profiles.devices.isEmpty {
+                    Divider()
+                    knownDevices
+                }
             }
-
-            if ceiling != .aac44 {
-                Label(
-                    "If tracks start skipping or refusing to play, drop back to 44.1 kHz AAC and sync again. 96 and 192 kHz music is converted whatever you pick — those don't play on any click-wheel iPod.",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-
-            Label(
-                "\(ceiling.sizeNote) Changing this deletes the converted files and re-encodes them, since only one format is kept at a time. Your original music is never touched.",
-                systemImage: "info.circle"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.vertical, 4)
-        .onChange(of: ceiling) { old, new in
-            guard new != ConversionCeiling.current else { return }
-            proposed = new
-            // Snap back for now; `apply` puts it where it belongs on confirm.
-            ceiling = old
+            .padding(.vertical, 4)
         }
         .confirmationDialog(
-            "Change the quality ceiling to \(proposed?.title ?? "")?",
-            isPresented: Binding(get: { proposed != nil }, set: { if !$0 { proposed = nil } }),
+            "Forget \"\(forgetting?.displayName ?? "")\"?",
+            isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
             titleVisibility: .visible
         ) {
-            Button("Change and Re-encode", role: .destructive) { apply() }
-            Button("Cancel", role: .cancel) { proposed = nil }
+            Button("Forget", role: .destructive) {
+                if let target = forgetting {
+                    profiles.forget(target.key, libraryRoot: libraryRoot)
+                }
+                forgetting = nil
+            }
+            Button("Cancel", role: .cancel) { forgetting = nil }
         } message: {
-            Text("Music already converted will be deleted and encoded again at the new setting, which takes a few seconds per track during the next sync. Your original files aren't touched.")
+            Text("Its quality setting and its list of ticked music and playlists are deleted. Nothing on the iPod itself changes — but the next time you connect it, it starts from the default settings again.")
         }
     }
 
-    /// Clearing is not housekeeping — it's what makes the change take effect.
-    ///
-    /// Converted files aren't keyed by the ceiling, so anything left behind sits
-    /// at exactly the path the new ceiling will look in, and `isUpToDate` would
-    /// judge it current because it's newer than its source. The sync would go on
-    /// shipping the old format indefinitely with nothing reported as pending.
-    ///
-    /// Both locations are cleared, not just the active one: a user who has
-    /// switched cache location before has files in the other tree too, and those
-    /// would become wrong-format landmines the next time they switched back.
-    private func apply() {
-        guard let target = proposed else { return }
-        proposed = nil
-        CacheInventory.clearAppSupport()
-        CacheInventory.clearBesideMusic(libraryRoot: libraryRoot)
-        ConversionCeiling.setCurrent(target)
-        ceiling = target
-        // The ceiling's own notification triggers the rescan; this one tells
-        // anything watching the cache that its size numbers are now zero.
-        NotificationCenter.default.post(name: CacheLocation.didChange, object: nil)
+    private var knownDevices: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("iPods My Pod knows")
+                .font(.headline)
+
+            Text("Each keeps its own quality setting and its own list of ticked music, so a small iPod doesn't have to hold what a large one does.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(profiles.devices) { device in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(device.displayName).fontWeight(.medium)
+                        Text([device.modelName, device.ceiling.shortTitle]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text(lastSeen(device.lastSeen))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Button("Forget…") { forgetting = device }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func lastSeen(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
@@ -126,6 +116,7 @@ private struct CacheSettingsView: View {
     @State private var report: CacheInventory.Report?
     @State private var scanning = false
     @State private var confirming: CacheLocation?
+    @State private var profiles = DeviceProfileStore.shared
 
     /// Read straight from defaults rather than threaded down from ContentView —
     /// Settings is its own scene and has no access to the main window's state.
@@ -136,12 +127,14 @@ private struct CacheSettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            locationSection
-            Divider()
-            storedSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                locationSection
+                Divider()
+                storedSection
+            }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
         .task { await refresh() }
         .onChange(of: location) { _, new in
             CacheLocation.setCurrent(new)
@@ -243,6 +236,61 @@ private struct CacheSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let report, !report.byCeiling.isEmpty {
+                Divider().padding(.vertical, 4)
+                byQualitySection(report)
+            }
+        }
+    }
+
+    /// What each quality setting costs, and which iPods are keeping it alive.
+    ///
+    /// Converted music is kept per setting so two iPods at different qualities
+    /// don't re-encode the library at each other every time you swap. The
+    /// arithmetic is worth showing: lossless runs roughly 3× AAC, so two iPods
+    /// can cost far more than one, and a number with no explanation reads as a
+    /// bug.
+    @ViewBuilder
+    private func byQualitySection(_ report: CacheInventory.Report) -> some View {
+        let inUse = profiles.ceilingsInUse
+        let unused = report.unusedBytes(inUse: inUse)
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("By quality setting")
+                .font(.callout)
+                .fontWeight(.medium)
+
+            ForEach(ConversionCeiling.allCases.filter { report.byCeiling[$0] != nil }) { ceiling in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(ceiling.shortTitle)
+                    if !inUse.contains(ceiling) {
+                        Text("no iPod uses this")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text(format(report.byCeiling[ceiling] ?? 0))
+                        .monospacedDigit()
+                        .foregroundStyle(inUse.contains(ceiling) ? .primary : .secondary)
+                }
+                .font(.callout)
+            }
+
+            if unused > 0 {
+                HStack {
+                    Text("\(format(unused)) is kept for settings no iPod is on.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button("Delete Unused") {
+                        Log.ui.info("user cleared unused-quality caches")
+                        CacheInventory.collectUnused(inUse: inUse, libraryRoot: libraryRoot)
+                        NotificationCenter.default.post(name: CacheLocation.didChange, object: nil)
+                        Task { await refresh() }
+                    }
+                }
             }
         }
     }

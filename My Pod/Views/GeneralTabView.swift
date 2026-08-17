@@ -5,6 +5,8 @@ struct GeneralTabView: View {
     @Bindable var libraryStore: MusicLibraryStore
     @Bindable var playlistStore: PlaylistStore
     @State private var showResetConfirm = false
+    @State private var showQualitySheet = false
+    @State private var profiles = DeviceProfileStore.shared
 
     var body: some View {
         ScrollView {
@@ -58,10 +60,57 @@ struct GeneralTabView: View {
                 }
                 infoRow("Mount", info.mountpoint.path)
                     .textSelection(.enabled)
+
+                Divider().padding(.vertical, 2)
+
+                qualityRow
             }
             .padding(.vertical, 4)
         }
 
+    }
+
+    /// This iPod's quality ceiling.
+    ///
+    /// Here rather than in Settings because it's a property of the device, like
+    /// the rows above it — Settings is a separate scene that can't see the
+    /// connected iPod, so the control would be inert there whenever nothing is
+    /// plugged in. Settings keeps the default a new iPod starts at.
+    private var qualityRow: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("Quality")
+                .foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profiles.active.ceiling.title)
+                Text("Music above this is converted down to it. Each iPod keeps its own setting.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Change…") { showQualitySheet = true }
+        }
+        .sheet(isPresented: $showQualitySheet) {
+            VStack(alignment: .leading, spacing: 16) {
+                ConversionCeilingPicker(
+                    subject: "the quality for “\(profiles.active.displayName)”",
+                    current: profiles.active.ceiling
+                ) { target in
+                    profiles.setCeiling(target, for: profiles.active.key, libraryRoot: libraryStore.libraryRoot)
+                    // Sizes and "needs converting" both moved. No rescan — the
+                    // scan records what files *are*, not what happens to them.
+                    NotificationCenter.default.post(name: CacheLocation.didChange, object: nil)
+                }
+                HStack {
+                    Spacer()
+                    Button("Done") { showQualitySheet = false }
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+            .frame(width: 520)
+        }
     }
 
     // MARK: - Library

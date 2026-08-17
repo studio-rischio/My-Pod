@@ -130,7 +130,7 @@ private struct AlbumRow: View {
             Image(systemName: "square.stack").foregroundStyle(.secondary)
             Text(album.name)
             Spacer()
-            if album.anyNeedsConversion {
+            if album.anyNeedsConversion(under: store.ceiling) {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .foregroundStyle(.orange)
                     .help("Contains tracks that need conversion")
@@ -185,7 +185,7 @@ private struct TrackRow: View {
             Spacer()
             Text(track.fileExtension.uppercased())
                 .font(.caption2)
-                .foregroundStyle(track.needsConversion ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                .foregroundStyle(track.needsConversion(under: store.ceiling) ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Capsule().fill(.quaternary))

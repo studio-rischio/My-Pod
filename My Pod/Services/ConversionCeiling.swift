@@ -22,7 +22,7 @@ import Foundation
 ///
 /// `nonisolated` because the scanner and conversion service both read this from
 /// detached tasks — overrides the project-wide MainActor default.
-nonisolated enum ConversionCeiling: String, CaseIterable, Sendable, Identifiable {
+nonisolated enum ConversionCeiling: String, CaseIterable, Codable, Sendable, Identifiable {
     /// AAC 256 kbps, 44.1 kHz. Every click-wheel iPod handles this.
     case aac44
     /// AAC 256 kbps, 48 kHz. Bench test F.
@@ -114,9 +114,12 @@ nonisolated enum ConversionCeiling: String, CaseIterable, Sendable, Identifiable
     /// 1.5's key. Read once at migration time, then removed — see `migrate()`.
     private static let legacyKey = "MyPod.conversionProfile"
 
-    /// Posted when the ceiling changes. Everything derived from it is stale:
-    /// which tracks need converting is decided at *scan* time and baked into
-    /// `LibraryTrack`, so observers rescan rather than merely refreshing.
+    /// Posted when the default ceiling changes.
+    ///
+    /// Nothing needs to rescan on it any more — `LibraryTrack` stores what a
+    /// file *is*, and the ceiling is applied at the point of use — so this is
+    /// only a signal that derived numbers (cache sizes, estimates) are stale.
+    /// `DeviceProfileStore` is the thing to watch for *which* ceiling applies.
     static let didChange = Notification.Name("MyPod.conversionCeilingChanged")
 
     static var current: ConversionCeiling {
@@ -126,11 +129,11 @@ nonisolated enum ConversionCeiling: String, CaseIterable, Sendable, Identifiable
         return value
     }
 
-    /// Record a new ceiling. Callers are responsible for clearing the converted
-    /// -file cache first — see `SettingsView`, which confirms with the user
-    /// before doing either. Cached output is *not* keyed by the ceiling, so a
-    /// change that didn't clear would keep serving files in the old format
-    /// forever, silently.
+    /// Record the default profile's ceiling.
+    ///
+    /// Go through `DeviceProfileStore.setCeiling` rather than calling this
+    /// directly: cached output *is* keyed by the ceiling now, so a change also
+    /// has to collect whatever that leaves unreferenced.
     static func setCurrent(_ ceiling: ConversionCeiling) {
         guard ceiling != current else { return }
         UserDefaults.standard.set(ceiling.rawValue, forKey: key)
@@ -140,13 +143,15 @@ nonisolated enum ConversionCeiling: String, CaseIterable, Sendable, Identifiable
 
     /// One-time upgrade from 1.5's `ConversionProfile`.
     ///
-    /// 1.5 kept output from different sample rates side by side, suffixing the
-    /// cache path (`v9-48/`, `Track-48.m4a`). This model clears on change
-    /// instead, so those suffixes are gone — which means a 1.5 user who had
-    /// selected 48 kHz would now resolve to the *unsuffixed* path and be served
-    /// the 44.1 kHz file sitting there. Only they need clearing; anyone who
-    /// stayed on the default has a cache that is still exactly correct, and
-    /// re-encoding their library for nothing would be its own bug.
+    /// 1.5 suffixed the cache path by sample rate (`v9-48/`, `Track-48.m4a`).
+    /// 1.6 dropped the suffix, which meant a 1.5 user who had selected 48 kHz
+    /// would resolve to the unsuffixed path and be served the 44.1 kHz file
+    /// sitting there — hence the clear. Only they need it; anyone who stayed on
+    /// the default had a cache that was still exactly correct.
+    ///
+    /// Superseded in practice by `CacheLocation.migrateLayoutIfNeeded`, which
+    /// clears everything once when moving to the per-ceiling layout. Kept
+    /// because it also *rewrites the stored ceiling*, and that still matters.
     ///
     /// Returns true if it cleared anything, so the caller can log it.
     @discardableResult
@@ -174,6 +179,17 @@ nonisolated enum ConversionCeiling: String, CaseIterable, Sendable, Identifiable
         case .aac48: "AAC 256 kbps · 48 kHz"
         case .alac44: "Apple Lossless · 16-bit / 44.1 kHz"
         case .alac48: "Apple Lossless · 24-bit / 48 kHz"
+        }
+    }
+
+    /// Compact form for places that only have a line to spare — the header
+    /// badge, the device row in Settings.
+    var shortTitle: String {
+        switch self {
+        case .aac44: "AAC · 44.1 kHz"
+        case .aac48: "AAC · 48 kHz"
+        case .alac44: "Lossless · 44.1 kHz"
+        case .alac48: "Lossless · 48 kHz"
         }
     }
 

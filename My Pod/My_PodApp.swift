@@ -13,13 +13,30 @@ import SwiftUI
 struct My_PodApp: App {
     @Environment(\.openWindow) private var openWindow
 
+    // The app's long-lived state lives here rather than in `ContentView`.
+    //
+    // `@State private var x = Thing()` runs `Thing()` on every init of the
+    // enclosing struct and throws away all but the first. A View struct is
+    // re-inited on every redraw; an App struct is built once. Holding these in
+    // the view meant an `IPodController`, a `PlaylistStore` reload and a whole
+    // library scan were constructed and discarded per redraw.
+    @State private var controller = IPodController()
+    @State private var libraryStore = MusicLibraryStore()
+    @State private var playlistStore = PlaylistStore()
+    @State private var syncEngine = SyncEngine()
+
     init() {
         Log.ui.info("app launched")
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(
+                controller: controller,
+                libraryStore: libraryStore,
+                playlistStore: playlistStore,
+                syncEngine: syncEngine
+            )
         }
         .commands {
             // Replace the system "About" menu item with one that opens our

@@ -54,9 +54,21 @@ final class PlaylistStore {
         }
     }
 
+    /// Whose playlist selection is being edited. Mirrors
+    /// `MusicLibraryStore.profile` — the two always move together, driven from
+    /// `ContentView`.
+    private(set) var profile: DeviceProfile = .defaultProfile
+
     private let defaults = UserDefaults.standard
-    private let selectionKey = "MyPod.selectedPlaylists"
-    private let offeredKey = "MyPod.offeredPlaylists"
+    /// Per-profile: an 8 GB nano and a 256 GB classic want different playlists
+    /// on them, for the same reason they want different tracks.
+    private var selectionKey: String { profile.storageKey(Self.selectionName) }
+    private var offeredKey: String { profile.storageKey(Self.offeredName) }
+    fileprivate static let selectionName = "selectedPlaylists"
+    /// Per-profile too: "already offered" only means anything paired with the
+    /// selection it was offered against.
+    fileprivate static let offeredName = "offeredPlaylists"
+    /// **Not** per-profile — a behaviour preference, not device state.
     private let autoSelectKey = "MyPod.autoSelectNewPlaylists"
     // Static so `init` can read it before the instance is fully initialized.
     private static let directoryKey = "MyPod.playlistDirectory"
@@ -70,20 +82,67 @@ final class PlaylistStore {
     /// `directory` is an explicit argument only for tests; normal construction
     /// takes the user's stored choice, falling back to `defaultDirectory`.
     init(directory: URL? = nil) {
+        Self.migrateGlobalSelectionIfNeeded()
         let stored = UserDefaults.standard.string(forKey: Self.directoryKey)
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         self.directory = directory ?? stored ?? Self.defaultDirectory
         // `object(forKey:)` rather than `bool(forKey:)` so a fresh install
         // (never set) defaults to on while an explicit false is honoured.
         self.autoSelectNewPlaylists = defaults.object(forKey: autoSelectKey) as? Bool ?? true
-        if let stored = defaults.array(forKey: selectionKey) as? [String] {
+        let defaultProfile = DeviceProfile.defaultProfile
+        if let stored = defaults.array(forKey: defaultProfile.storageKey(Self.selectionName)) as? [String] {
             self.selectedNameKeys = Set(stored)
         }
-        if let stored = defaults.array(forKey: offeredKey) as? [String] {
+        if let stored = defaults.array(forKey: defaultProfile.storageKey(Self.offeredName)) as? [String] {
             self.offeredNameKeys = Set(stored)
         }
         ensureDirectoryExists()
         reload()
+    }
+
+    // MARK: - Profiles
+
+    /// Switch to another iPod's playlist selection. No reload — the `.m3u`
+    /// files on disk are the same whichever device is attached.
+    func activate(_ newProfile: DeviceProfile) {
+        guard newProfile.key != profile.key else { return }
+        profile = newProfile
+        selectedNameKeys = Set(defaults.array(forKey: selectionKey) as? [String] ?? [])
+        offeredNameKeys = Set(defaults.array(forKey: offeredKey) as? [String] ?? [])
+        pruneSelection()
+        // A playlist this device has never been offered should still be offered
+        // now, exactly as if it had just appeared on disk.
+        offerUnseenPlaylists()
+        recomputeNew()
+    }
+
+    static func copySelection(from source: DeviceProfile, to destination: DeviceProfile) {
+        let defaults = UserDefaults.standard
+        for name in [selectionName, offeredName] {
+            defaults.set(defaults.object(forKey: source.storageKey(name)), forKey: destination.storageKey(name))
+        }
+    }
+
+    static func forgetSelection(for profile: DeviceProfile) {
+        let defaults = UserDefaults.standard
+        for name in [selectionName, offeredName] {
+            defaults.removeObject(forKey: profile.storageKey(name))
+        }
+    }
+
+    /// One-time move of the app-wide playlist selection onto the default
+    /// profile. Old keys are left in place; see `MusicLibraryStore`'s twin.
+    private static func migrateGlobalSelectionIfNeeded() {
+        let defaults = UserDefaults.standard
+        let flag = "MyPod.playlistProfilesMigrated"
+        guard !defaults.bool(forKey: flag) else { return }
+        defaults.set(true, forKey: flag)
+
+        let target = DeviceProfile.defaultProfile
+        for (old, name) in [("MyPod.selectedPlaylists", selectionName), ("MyPod.offeredPlaylists", offeredName)] {
+            guard let value = defaults.object(forKey: old) else { continue }
+            defaults.set(value, forKey: target.storageKey(name))
+        }
     }
 
     private func ensureDirectoryExists() {

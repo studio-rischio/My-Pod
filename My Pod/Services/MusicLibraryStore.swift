@@ -19,6 +19,21 @@ final class MusicLibraryStore {
     private(set) var library: MusicLibrary = .empty
     private(set) var scanState: ScanState = .idle
 
+    /// Whose selection is being edited, and at what quality. The default
+    /// profile whenever no iPod is connected.
+    ///
+    /// The library itself is *not* per-profile — one music folder, scanned once,
+    /// serves every device. Only what's ticked and what it converts to differ,
+    /// which is why switching devices costs a recompute rather than a rescan.
+    private(set) var profile: DeviceProfile = .defaultProfile
+
+    var ceiling: ConversionCeiling { profile.ceiling }
+
+    /// A conversion service for the active profile. Cheap to make — it's a
+    /// value type — but it must never be constructed without a ceiling, or it
+    /// would silently answer for the wrong iPod.
+    var conversion: ConversionService { ConversionService(ceiling: ceiling) }
+
     /// How much of the library syncs. Mirrors iTunes, where the same choice
     /// governed both playlists and per-item checkboxes: in `.entireLibrary`
     /// every track and every playlist goes, and the checkboxes in both tabs are
@@ -93,7 +108,7 @@ final class MusicLibraryStore {
     /// profile changes: the service captures both at init, so keeping one
     /// instance for the app's lifetime would answer "is this cached?" against
     /// wherever the cache used to be.
-    @ObservationIgnored private var conversionForEstimates = ConversionService()
+    @ObservationIgnored private var conversionForEstimates = ConversionService(ceiling: .current)
 
     /// Path → track, rebuilt at scan time so the inspector can resolve a
     /// highlighted row without walking the whole library on every redraw.
@@ -154,14 +169,24 @@ final class MusicLibraryStore {
 
     private let defaults = UserDefaults.standard
     private let rootKey = "MyPod.libraryRoot"
-    private let selectionKey = "MyPod.selectedTracks"
-    private let syncModeKey = "MyPod.syncMode"
+
+    /// Per-profile, so two iPods can sync different music. Namespaced by the
+    /// profile's stable UUID rather than held inside the profile record: these
+    /// are thousands of paths rewritten on every checkbox click, and storing
+    /// them in the shared blob would rewrite every device's state to save one.
+    private var selectionKey: String { profile.storageKey(Self.selectionName) }
+    private var syncModeKey: String { profile.storageKey(Self.syncModeName) }
+
+    fileprivate static let selectionName = "selectedTracks"
+    fileprivate static let syncModeName = "syncMode"
 
     init() {
+        Self.migrateGlobalSelectionIfNeeded()
+        let defaultProfile = DeviceProfile.defaultProfile
         // Existing installs have a selection they built by hand, so the default
         // has to be `.selected` — defaulting to `.entireLibrary` would quietly
         // widen every upgrader's next sync to their whole library.
-        self.syncMode = UserDefaults.standard.string(forKey: "MyPod.syncMode")
+        self.syncMode = UserDefaults.standard.string(forKey: defaultProfile.storageKey(Self.syncModeName))
             .flatMap(SyncMode.init(rawValue:)) ?? .selected
         if let path = defaults.string(forKey: rootKey) {
             let url = URL(fileURLWithPath: path)
@@ -169,14 +194,15 @@ final class MusicLibraryStore {
                 self.libraryRoot = url
             }
         }
-        if let stored = defaults.array(forKey: selectionKey) as? [String] {
+        if let stored = defaults.array(forKey: defaultProfile.storageKey(Self.selectionName)) as? [String] {
             self.selectedTrackPaths = Set(stored)
         }
-        // Before anything reads the cache. 1.5 kept output from different sample
-        // rates side by side under suffixed paths; this version keeps one format
-        // and clears on change, so a 1.5 install that had raised its limits is
-        // holding files at paths the new rules would misread.
+        // Both before anything reads the cache. 1.5 kept output from different
+        // sample rates side by side under suffixed paths, so a 1.5 install that
+        // had raised its limits is holding files the later rules would misread;
+        // and ≤1.6 kept a single flat cache, which now lives one folder deeper.
         ConversionCeiling.migrate(libraryRoot: libraryRoot)
+        CacheLocation.migrateLayoutIfNeeded(libraryRoot: libraryRoot)
         // `allLibraryPaths` is still empty here, so `.entireLibrary` resolves to
         // nothing until the scan lands and recomputes — which is correct: there
         // is no library yet to select all of.
@@ -192,23 +218,88 @@ final class MusicLibraryStore {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.cacheLayoutChanged() }
         }
-        // A ceiling change is the stronger signal of the two: which tracks need
-        // converting at all is decided during the scan and baked into
-        // `LibraryTrack.needsConversion`, so refreshing estimates isn't enough —
-        // the library has to be classified again from scratch.
-        NotificationCenter.default.addObserver(
-            forName: ConversionCeiling.didChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.cacheLayoutChanged()
-                self?.rescan()
-            }
-        }
+        // Deliberately no observer for `ConversionCeiling.didChange`. The scan
+        // records what each file *is* rather than what should happen to it, so
+        // a quality change — or a different iPod being plugged in — is a
+        // recompute, not a filesystem walk. The ceiling arrives via `activate`.
         if libraryRoot != nil {
             rescan()
         }
+    }
+
+    // MARK: - Profiles
+
+    /// Switch to another iPod's settings and selection.
+    ///
+    /// No rescan: the library is device-independent, so only the derived sets
+    /// change. That's what makes plugging in a different iPod feel instant
+    /// rather than like a settings change.
+    func activate(_ newProfile: DeviceProfile) {
+        let ceilingChanged = newProfile.ceiling != profile.ceiling
+        let profileChanged = newProfile.key != profile.key
+        guard ceilingChanged || profileChanged else { return }
+        profile = newProfile
+
+        if profileChanged {
+            selectedTrackPaths = Set(defaults.array(forKey: selectionKey) as? [String] ?? [])
+            // Assigning `syncMode` writes through to the *new* profile's key,
+            // which is correct — `profile` is already updated. The didSet is a
+            // no-op when both profiles agree, hence the explicit recompute below.
+            syncMode = defaults.string(forKey: syncModeKey)
+                .flatMap(SyncMode.init(rawValue:)) ?? .selected
+            // Deliberately *not* intersected against the scanned library here.
+            // An iPod can connect before the first scan lands, and intersecting
+            // against a library that is still empty would silently delete the
+            // device's entire selection — and then persist it. Pruning already
+            // happens on every scan, which is the only moment the library is
+            // actually known.
+        }
+        if ceilingChanged {
+            // Which tracks convert, and how big they land, both moved.
+            cacheLayoutChanged()
+        }
+        recomputeEffectiveSelection()
+        Log.library.info("editing \(newProfile.isDefault ? "default settings" : "\"\(newProfile.displayName)\"") — \(self.selectedTrackPaths.count) tracks ticked, \(newProfile.ceiling.rawValue)")
+    }
+
+    /// Give a newly-seen iPod the default profile's selection, so a second
+    /// device starts from what the first one syncs rather than from nothing.
+    static func copySelection(from source: DeviceProfile, to destination: DeviceProfile) {
+        let defaults = UserDefaults.standard
+        for name in [selectionName, syncModeName] {
+            let value = defaults.object(forKey: source.storageKey(name))
+            defaults.set(value, forKey: destination.storageKey(name))
+        }
+    }
+
+    static func forgetSelection(for profile: DeviceProfile) {
+        let defaults = UserDefaults.standard
+        for name in [selectionName, syncModeName] {
+            defaults.removeObject(forKey: profile.storageKey(name))
+        }
+    }
+
+    /// One-time move of the app-wide selection onto the default profile.
+    ///
+    /// The old keys are left in place rather than removed: they cost a few
+    /// kilobytes, and leaving them means downgrading to 1.6 still finds the
+    /// selection it wrote. The one-shot flag is what stops a later re-upgrade
+    /// clobbering per-profile edits with the stale global copy.
+    private static func migrateGlobalSelectionIfNeeded() {
+        let defaults = UserDefaults.standard
+        let flag = "MyPod.profilesMigrated"
+        guard !defaults.bool(forKey: flag) else { return }
+        defaults.set(true, forKey: flag)
+
+        let target = DeviceProfile.defaultProfile
+        var moved = 0
+        for (old, name) in [("MyPod.selectedTracks", selectionName), ("MyPod.syncMode", syncModeName)] {
+            guard let value = defaults.object(forKey: old) else { continue }
+            defaults.set(value, forKey: target.storageKey(name))
+            moved += 1
+        }
+        guard moved > 0 else { return }
+        Log.library.info("moved the app-wide sync selection onto the default iPod profile")
     }
 
     // MARK: - Library root
@@ -268,7 +359,7 @@ final class MusicLibraryStore {
 
     /// The converted-file cache moved, was emptied, or changed shape.
     private func cacheLayoutChanged() {
-        conversionForEstimates = ConversionService()
+        conversionForEstimates = ConversionService(ceiling: ceiling)
         estimateCache.removeAll(keepingCapacity: true)
         recomputePending()
         Log.library.info("cache layout changed — size estimates recomputed")
@@ -643,14 +734,15 @@ final class MusicLibraryStore {
 
     /// Selected tracks (in library order) that aren't iPod-native.
     var selectedNeedingConversion: [LibraryTrack] {
-        selectedLibraryTracks.filter { $0.needsConversion }
+        let svc = conversion
+        return selectedLibraryTracks.filter { svc.needsConversion($0) }
     }
 
     /// Selected non-native tracks that don't yet have an up-to-date cached
     /// .m4a version in the album's `.mypod/` folder.
     var pendingConversion: [LibraryTrack] {
-        let svc = ConversionService()
-        return selectedLibraryTracks.filter { $0.needsConversion && !svc.isCached($0) }
+        let svc = conversion
+        return selectedLibraryTracks.filter { svc.needsConversion($0) && !svc.isCached($0) }
     }
 
     private var selectedLibraryTracks: [LibraryTrack] {
@@ -681,7 +773,7 @@ final class MusicLibraryStore {
         let startedAt = Date()
         conversionState = .running(completed: 0, total: tracks.count, startedAt: startedAt)
 
-        let service = ConversionService()
+        let service = conversion
         conversionTask = Task {
             let results = await service.ensure(tracks: tracks, force: force) { [weak self] completed, total in
                 guard let store = self else { return }

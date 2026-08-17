@@ -5,16 +5,17 @@ import Foundation
 /// same way `ipod-sync.c` does it. `nonisolated` because scanning runs on a
 /// detached background task — overrides the project-wide MainActor default.
 nonisolated enum LibraryScanner {
-    /// The ceiling is passed in rather than read from defaults deep inside the
-    /// walk, so one scan can't straddle a settings change and classify half the
-    /// library by one rule and half by another.
-    static func scan(root: URL, ceiling: ConversionCeiling = .current) async -> MusicLibrary {
+    /// Takes no conversion ceiling. The scan records what each file *is*, and
+    /// whether that's out of spec is decided per-iPod at the point of use — see
+    /// `SourceFormat`. One scan therefore serves every connected device, and
+    /// changing a quality setting no longer means walking the library again.
+    static func scan(root: URL) async -> MusicLibrary {
         await Task.detached(priority: .userInitiated) {
-            scanSync(root: root, ceiling: ceiling)
+            scanSync(root: root)
         }.value
     }
 
-    private static func scanSync(root: URL, ceiling: ConversionCeiling) -> MusicLibrary {
+    private static func scanSync(root: URL) -> MusicLibrary {
         let fm = FileManager.default
         var artists: [LibraryArtist] = []
         var totalTracks = 0
@@ -40,7 +41,7 @@ nonisolated enum LibraryScanner {
             var albums: [LibraryAlbum] = []
             for albumURL in albumDirs.sorted(by: { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }) {
                 guard isDirectory(albumURL), !shouldSkip(albumURL) else { continue }
-                let tracks = scanAlbum(albumURL: albumURL, artist: artistName, ceiling: ceiling)
+                let tracks = scanAlbum(albumURL: albumURL, artist: artistName)
                 guard !tracks.isEmpty else { continue }
                 albums.append(LibraryAlbum(
                     artist: artistName,
@@ -60,7 +61,7 @@ nonisolated enum LibraryScanner {
         return MusicLibrary(root: root, artists: artists, totalTracks: totalTracks, scannedAt: Date())
     }
 
-    private static func scanAlbum(albumURL: URL, artist: String, ceiling: ConversionCeiling) -> [LibraryTrack] {
+    private static func scanAlbum(albumURL: URL, artist: String) -> [LibraryTrack] {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(
             at: albumURL,
@@ -83,15 +84,24 @@ nonisolated enum LibraryScanner {
             // plausibly be out of spec, and reuse that single read for the
             // duration below rather than opening the file twice.
             let probe = AudioFormat.shouldProbe(ext) ? AudioProbe.read(fileURL) : nil
-            let needsConversion = AudioFormat.needsConversion(ext, probe: probe, ceiling: ceiling)
-            if needsConversion, let probe {
-                Log.library.debug("out of spec, will convert: \(fileURL.lastPathComponent) — \(probe.summary)")
+            var format = AudioFormat.sourceFormat(ext: ext, probe: probe)
+
+            // FLAC and friends have no CoreAudio probe, so their rate, depth and
+            // length come from the container header instead — one open() per
+            // file, and only for files that convert at every ceiling anyway.
+            // Natives that pass `alwaysConverts` were already covered by `probe`.
+            if format.alwaysConverts, probe == nil {
+                let flac = FLACHeader.streamInfo(of: fileURL)
+                format.sampleRate = flac.sampleRate
+                format.bitDepth = flac.bitDepth
+                format.durationMS = flac.durationMS
             }
-            // Only worth reading for files we'll convert — the rest sync
-            // byte-for-byte, so nothing downstream needs their rate or length.
-            // The probe already carries both; FLAC needs its own header read,
-            // which returns them together so it stays one open() per file.
-            let flac = needsConversion && probe == nil ? FLACHeader.streamInfo(of: fileURL) : FLACHeader.StreamInfo()
+
+            // Logged at the strictest rung, which is the superset: anything that
+            // converts under any ceiling converts under this one.
+            if let probe, format.needsConversion(under: .aac44) {
+                Log.library.debug("out of spec at 44.1 kHz AAC: \(fileURL.lastPathComponent) — \(probe.summary)")
+            }
 
             tracks.append(LibraryTrack(
                 id: fileURL,
@@ -101,11 +111,7 @@ nonisolated enum LibraryScanner {
                 title: title,
                 fileExtension: ext.lowercased(),
                 sizeBytes: size,
-                needsConversion: needsConversion,
-                durationMS: needsConversion ? (probe?.durationMS ?? flac.durationMS) : 0,
-                sampleRate: needsConversion ? (probe?.sampleRate ?? flac.sampleRate) : 0,
-                bitDepth: needsConversion ? (probe?.bitDepth ?? flac.bitDepth) : 0,
-                isLossless: needsConversion && AudioFormat.isLossless(ext, probe: probe)
+                format: format
             ))
         }
         // Sort: by track number ascending (with 0/no-number after), then by name.

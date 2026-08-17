@@ -110,6 +110,73 @@ nonisolated enum AudioFormat {
         guard let probe else { return false }
         return !isIPodPlayable(probe, ceiling: ceiling)
     }
+
+    /// Everything about a source file that any ceiling could care about,
+    /// gathered once at scan time.
+    ///
+    /// Ceiling-independent on purpose — see `SourceFormat`. FLAC and friends
+    /// have no CoreAudio probe, so the scanner fills in rate/depth/duration from
+    /// the container header afterwards.
+    static func sourceFormat(ext: String, probe: AudioProbe.Format?) -> SourceFormat {
+        SourceFormat(
+            alwaysConverts: needsConversion(ext),
+            sampleRate: probe?.sampleRate ?? 0,
+            bitDepth: probe?.bitDepth ?? 0,
+            isLossless: isLossless(ext, probe: probe),
+            hasUnsupportedAACProfile: probe.map {
+                !$0.layers.isDisjoint(with: unplayableAACProfiles)
+            } ?? false,
+            durationMS: probe?.durationMS ?? 0
+        )
+    }
+}
+
+/// What a source file actually is, independent of what we intend to do with it.
+///
+/// This exists so `needsConversion` can be answered *at the point of use* rather
+/// than frozen into the scan. Two iPods can be attached to the same library at
+/// different quality ceilings, and the same file is over-spec for one and fine
+/// for the other — so the scan records facts and each caller applies its own
+/// ceiling to them.
+///
+/// It costs nothing extra to gather. The ceilings form a ladder where each rung
+/// is strictly looser than the one below, so anything in spec at the strictest
+/// rung is in spec at every rung: the scanner probes exactly the same files it
+/// always did, and only the *storing* of the result became unconditional.
+nonisolated struct SourceFormat: Sendable, Hashable {
+    /// The extension alone forces conversion (FLAC, OGG, Opus, WMA, APE). No
+    /// ceiling can let these through, so nothing else here is consulted.
+    var alwaysConverts: Bool = false
+    /// Effective rate in Hz — the max across codec layers, so an HE-AAC file
+    /// reports what it plays at rather than its half-rate core. 0 when unknown.
+    var sampleRate: Int = 0
+    /// Bits per channel, 0 when unknown. Only meaningful with `isLossless`:
+    /// a lossy file's depth says nothing about what the iPod has to decode.
+    var bitDepth: Int = 0
+    /// Whether the source is lossless. Decides the *target* codec under a
+    /// lossless ceiling — lossy material always becomes AAC, since encoding it
+    /// to ALAC would inflate it several-fold and recover nothing.
+    var isLossless: Bool = false
+    /// HE-AAC, ELD, spatial. Never passed through at any ceiling: click-wheel
+    /// decoders predate SBR, so the file plays audibly wrong rather than merely
+    /// over-spec, and no amount of user opt-in changes that.
+    var hasUnsupportedAACProfile: Bool = false
+    /// Playing time in ms, 0 when unknown. Used to size converted output.
+    var durationMS: Int = 0
+
+    /// Whether this file has to be re-encoded to reach an iPod set to `ceiling`.
+    ///
+    /// Only ever asks whether the file is *above* the ceiling. Something below
+    /// it — a 128 kbps MP3, a 32 kHz AAC — passes untouched, because the iPod
+    /// plays it and re-encoding upward would cost quality to gain nothing.
+    func needsConversion(under ceiling: ConversionCeiling) -> Bool {
+        if alwaysConverts { return true }
+        if hasUnsupportedAACProfile { return true }
+        // 0 means the header wouldn't say; don't re-encode on a guess.
+        if sampleRate > ceiling.maxSampleRate { return true }
+        if isLossless, bitDepth > ceiling.maxBitDepth { return true }
+        return false
+    }
 }
 
 // `nonisolated` on these value types overrides the project-wide
@@ -126,28 +193,14 @@ nonisolated struct LibraryTrack: Sendable, Identifiable, Hashable {
     let title: String            // parsed from filename
     let fileExtension: String
     let sizeBytes: UInt64
-    let needsConversion: Bool
-    /// Playing time in milliseconds, or 0 when unknown. Only populated for
-    /// tracks that need conversion, and only where it's cheap to read from the
-    /// file header — FLAC's STREAMINFO block, or `AudioProbe` for a natively
-    /// wrapped file whose contents turned out to be out of spec. It exists so
-    /// `ConversionService.estimatedIPodBytes` can size the AAC output the
-    /// track will actually occupy on the device rather than its source size.
-    let durationMS: Int
-    /// Source sample rate in Hz, or 0 when unknown. Populated on the same terms
-    /// as `durationMS` — only for tracks we'll convert, only where the header
-    /// gives it up cheaply. `ConversionCeiling.encodeRate(sourceRate:)` uses it
-    /// to avoid resampling a 44.1 kHz source up to the ceiling, which would cost
-    /// size and add intersample overshoot for nothing.
-    let sampleRate: Int
-    /// Source bit depth, or 0 when unknown. Same terms as `sampleRate`. Used
-    /// only to size lossless output, where the delivered bytes scale with depth
-    /// and rate rather than with a bitrate.
-    let bitDepth: Int
-    /// Whether the source is lossless. Decides the *target* codec under a
-    /// lossless ceiling: lossy material always becomes AAC, since encoding it
-    /// to ALAC would inflate it several-fold and recover nothing.
-    let isLossless: Bool
+    /// What the file actually is. Deliberately not "does it need converting" —
+    /// that answer depends on which iPod is being filled, so it's computed by
+    /// `needsConversion(under:)` at the point of use.
+    let format: SourceFormat
+
+    func needsConversion(under ceiling: ConversionCeiling) -> Bool {
+        format.needsConversion(under: ceiling)
+    }
 
     var displayName: String {
         trackNumber > 0 ? String(format: "%02d. %@", trackNumber, title as NSString) : title
@@ -166,7 +219,10 @@ nonisolated struct LibraryAlbum: Sendable, Identifiable, Hashable {
 
     var sizeBytes: UInt64 { tracks.reduce(0) { $0 &+ $1.sizeBytes } }
     var trackCount: Int { tracks.count }
-    var anyNeedsConversion: Bool { tracks.contains(where: \.needsConversion) }
+
+    func anyNeedsConversion(under ceiling: ConversionCeiling) -> Bool {
+        tracks.contains { $0.needsConversion(under: ceiling) }
+    }
 }
 
 nonisolated struct LibraryArtist: Sendable, Identifiable, Hashable {

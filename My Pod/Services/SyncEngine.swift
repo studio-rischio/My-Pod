@@ -5,7 +5,11 @@ import Observation
 @Observable
 final class SyncEngine {
     private(set) var state: SyncState = .idle
-    let conversionService = ConversionService()
+
+    /// The conversion settings of the iPod being synced. Set by `plan`, and
+    /// reused by `execute` so a single run can't straddle a device swap.
+    /// Starts at the default profile's ceiling purely so it's never nil.
+    private(set) var conversionService = ConversionService(ceiling: .current)
     private var cancelRequested = false
 
     /// Phase weighting for the run in flight, derived from its plan. Only the
@@ -53,11 +57,13 @@ final class SyncEngine {
         selectedPaths: Set<String>,
         playlists: [Playlist],
         device: IPodDevice,
+        ceiling: ConversionCeiling,
         freeBytes: UInt64
     ) async {
-        Log.sync.info("plan started: \(selectedPaths.count) selected, \(playlists.count) playlists")
+        Log.sync.info("plan started: \(selectedPaths.count) selected, \(playlists.count) playlists, quality \(ceiling.rawValue)")
         state = .planning
         cancelRequested = false
+        conversionService = ConversionService(ceiling: ceiling)
         let iPodTracks = await device.tracks()
         let devicePlaylists = await device.userPlaylists()
 
@@ -173,11 +179,11 @@ final class SyncEngine {
         planned.reserveCapacity(desiredPaths.count)
         for path in desiredPaths {
             guard let lib = byPath[path] else { continue }
-            let sourceURL = lib.needsConversion ? conversion.iPodPlayableURL(for: lib) : lib.url
+            let needsConversion = conversion.needsConversion(lib)
             planned.append(PlannedTrack(
                 library: lib,
-                sourceURL: sourceURL,
-                needsConversion: lib.needsConversion
+                sourceURL: needsConversion ? conversion.iPodPlayableURL(for: lib) : lib.url,
+                needsConversion: needsConversion
             ))
         }
         // Sort planned by artist/album/track for predictable progress UX.

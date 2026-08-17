@@ -72,7 +72,7 @@ nonisolated enum SelectionInspector: Sendable {
                 out.deliveredBytes &+= conversion.estimatedIPodBytes(for: track)
                 if checkedPaths.contains(track.url.path) { out.checked += 1 }
                 if let keys = iPodKeys, keys.contains(TrackKey(library: track)) { onIPod += 1 }
-                guard track.needsConversion else { continue }
+                guard conversion.needsConversion(track) else { continue }
                 out.needConversion += 1
                 guard conversion.isCached(track) else { continue }
                 out.converted += 1
@@ -100,7 +100,7 @@ nonisolated enum SelectionInspector: Sendable {
                 isChecked: checkedPaths.contains(track.url.path),
                 targetFormat: conversion.targetFormatDescription(for: track)
             )
-            guard track.needsConversion else { return detail }
+            guard conversion.needsConversion(track) else { return detail }
             let url = conversion.iPodPlayableURL(for: track)
             detail.convertedURL = url
             if conversion.isCached(track),

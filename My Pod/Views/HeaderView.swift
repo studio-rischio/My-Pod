@@ -8,6 +8,8 @@ struct HeaderView: View {
     /// that sees the model table and the mounted volume together.
     let capacityBytes: UInt64
     let hasNonStockDrive: Bool
+    /// Whose settings and selection the tabs below are editing.
+    let profile: DeviceProfile
     let onEject: () -> Void
 
     var body: some View {
@@ -27,6 +29,7 @@ struct HeaderView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            editingBadge
             if status == .ready {
                 Button {
                     Log.ui.info("user clicked Eject")
@@ -72,6 +75,27 @@ struct HeaderView: View {
         let pieces = [info.modelName, info.generation, cap, "\(info.trackCount) tracks"]
             .filter { !$0.isEmpty }
         return pieces.joined(separator: " · ")
+    }
+
+    /// Which iPod's ticks and quality setting the tabs are showing.
+    ///
+    /// Not decoration. Selection is per-device, so with nothing plugged in the
+    /// tabs edit the default profile — and a user who ticks fifty albums
+    /// unplugged, then connects their iPod, will find those ticks "missing".
+    /// Nothing was lost, which makes it more confusing rather than less, so the
+    /// answer has to be on screen the whole time.
+    private var editingBadge: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(profile.isDefault ? "Default settings" : "Editing \(profile.displayName)")
+                .font(.caption)
+                .fontWeight(.medium)
+            Text(profile.ceiling.shortTitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .help(profile.isDefault
+              ? "No iPod is connected, so the tabs below show the settings and selection used for a new iPod. Connect one to edit its own."
+              : "Ticks and quality below apply to this iPod. Each iPod keeps its own.")
     }
 
     @ViewBuilder
