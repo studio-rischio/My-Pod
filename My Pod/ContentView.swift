@@ -16,6 +16,7 @@ struct ContentView: View {
     let syncEngine: SyncEngine
 
     @State private var showSyncSheet = false
+    @State private var showManualSheet = false
 
     // Computed, not stored: a stored `private` property would make the
     // memberwise init private too. Reading `.active` in `body` still registers
@@ -41,9 +42,9 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             StorageBarView(
                 breakdown: controller.storage,
-                pending: libraryStore.pending,
+                pending: isManual ? manualStore.pending : libraryStore.pending,
                 canSync: canSync,
-                showsSync: !profileStore.active.manageManually,
+                syncTitle: "Sync",
                 onSync: startSync
             )
         }
@@ -94,6 +95,11 @@ struct ContentView: View {
         .sheet(isPresented: $showSyncSheet) {
             SyncSheetView(engine: syncEngine, onCommit: commitSync)
         }
+        // Same shell as the sync sheet, deliberately: committing a change to
+        // the iPod should look and feel identical whichever mode produced it.
+        .sheet(isPresented: $showManualSheet) {
+            ManualSheetView(store: manualStore, onCommit: commitManualAdd)
+        }
     }
 
     private func pushPlaylistSelection() {
@@ -111,17 +117,27 @@ struct ContentView: View {
             : playlistStore.selectedPlaylists
     }
 
-    /// A manually managed iPod is never synced — that's what the mode means, and
-    /// the Music tab it would sync from isn't even on screen. The storage bar
-    /// stays: capacity matters more here, not less, because manual adds have no
-    /// plan step to catch overfilling before it starts.
+    private var isManual: Bool { profileStore.active.manageManually }
+
+    /// The primary button does whatever "make this iPod match what I set up"
+    /// means for the mode it's in: run the mirror, or commit the manual queue.
+    /// One action, one place — the mode changes what it does, not where it is.
     private var canSync: Bool {
-        controller.status == .ready
-            && libraryStore.libraryRoot != nil
-            && !profileStore.active.manageManually
+        guard controller.status == .ready else { return false }
+        if isManual {
+            return manualStore.hasPendingChanges && !manualStore.isBusy
+        }
+        return libraryStore.libraryRoot != nil
     }
 
     private func startSync() {
+        if isManual {
+            // Clear a previous run's outcome, or the sheet opens on the last
+            // result rather than on what's queued now.
+            manualStore.resetState()
+            showManualSheet = true
+            return
+        }
         guard canSync,
               let root = libraryStore.libraryRoot,
               let device = controller.device else {
@@ -140,6 +156,17 @@ struct ContentView: View {
                 ceiling: libraryStore.ceiling,
                 freeBytes: controller.storage.free
             )
+        }
+    }
+
+    private func commitManualAdd() {
+        guard let device = controller.device else { return }
+        let free = controller.storage.free
+        Log.ui.info("user confirmed manual changes")
+        Task {
+            await manualStore.commit(to: device, freeBytes: free)
+            // Track count and free space both moved.
+            controller.refresh()
         }
     }
 

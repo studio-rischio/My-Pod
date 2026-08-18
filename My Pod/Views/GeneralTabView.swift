@@ -6,7 +6,8 @@ struct GeneralTabView: View {
     @Bindable var playlistStore: PlaylistStore
     @State private var showResetConfirm = false
     @State private var showQualitySheet = false
-    @State private var showLibraryConfirm = false
+    @State private var showModeSheet = false
+    @State private var proposedManual = false
     @State private var strandedCount = 0
     @State private var profiles = DeviceProfileStore.shared
 
@@ -17,11 +18,7 @@ struct GeneralTabView: View {
                 // outside the connected/disconnected branch: choosing folders
                 // is the first thing a new user does, and requiring an iPod to
                 // be plugged in before the app will let them do it is backwards.
-                if let info = controller.deviceInfo {
-                    deviceSection(info)
-                } else {
-                    noDeviceSection
-                }
+                deviceSection(controller.deviceInfo)
 
                 librarySection
 
@@ -35,90 +32,96 @@ struct GeneralTabView: View {
     }
 
     @ViewBuilder
-    private func deviceSection(_ info: DeviceInfo) -> some View {
+    /// The device facts the header bar doesn't already carry.
+    ///
+    /// Name, model, generation, capacity, track and playlist counts all live in
+    /// the header, so repeating them here was just noise taking up height. What's
+    /// left is the identity and location — the two things you'd actually come to
+    /// this box to read or copy rather than glance at.
+    ///
+    /// Rendered identically whether or not an iPod is attached, with placeholders
+    /// standing in. That's the point: the box keeps its height, so connecting a
+    /// device doesn't shove the rest of the tab down the page. The header is
+    /// already saying "No iPod connected" loudly enough that this doesn't need
+    /// to as well.
+    private func deviceSection(_ info: DeviceInfo?) -> some View {
         GroupBox("Device") {
             VStack(alignment: .leading, spacing: 8) {
-                infoRow("Name", info.displayName)
-                infoRow("Model", info.modelName)
-                if !info.generation.isEmpty {
-                    infoRow("Generation", info.generation)
-                }
-                // Two different capacities, and they only agree on a stock
-                // iPod: the volume is what's actually installed, `capacityGB`
-                // is what libgpod's model table says this model shipped with.
-                // Showing both would be noise on an unmodified device, so the
-                // stock row appears only when the drive has been changed.
-                infoRow("Capacity", byteCount(controller.effectiveCapacityBytes))
-                    .help("Reported by the mounted volume — the drive actually installed.")
-                if controller.hasNonStockDrive {
-                    infoRow("Stock capacity", String(format: "%.0f GB", info.capacityGB))
-                        .help("What this iPod model shipped with, per libgpod's model table. It differs from the installed capacity, so this drive has been replaced.")
-                }
-                infoRow("Tracks", "\(info.trackCount)")
-                infoRow("Playlists", "\(info.playlistCount)")
-                if let uuid = info.uuid {
-                    infoRow("UUID", uuid)
-                        .textSelection(.enabled)
-                }
-                infoRow("Mount", info.mountpoint.path)
+                infoRow("UUID", info?.uuid ?? placeholder)
                     .textSelection(.enabled)
-
-                Divider().padding(.vertical, 2)
-
-                qualityRow
-                managementRow
+                    .help("The iPod's FireWire GUID. My Pod uses it to recognise this device and remember its settings.")
+                infoRow("Volume", info?.mountpoint.path ?? placeholder)
+                    .textSelection(.enabled)
             }
             .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-
     }
 
-    /// Whether this iPod mirrors the library or is managed by hand.
+    /// An em dash rather than "Not connected" in every row: the header says that
+    /// once, and three copies of it reads like an error.
+    private var placeholder: String { "—" }
+
+    private var isManual: Bool { profiles.active.manageManually }
+
+    /// Which of the two models this iPod uses.
     ///
-    /// The switch is the point of the whole design. Turning it *off* is
-    /// destructive — the next sync removes everything on the device that isn't
-    /// in this iPod's selection — and a deliberate flip is the only moment the
-    /// app can honestly say so. Left as a silent rule, that same loss happens at
-    /// sync time to someone with no idea anything changed.
+    /// A switch rather than a button, because these are two standing states and
+    /// neither is an "action" — the picker shows you which one you're in without
+    /// having to read a sentence. Flipping it opens an explanation rather than
+    /// applying immediately: the two modes differ in what happens to music you
+    /// already have, which is not something to discover afterwards.
     private var managementRow: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("Music")
-                .foregroundStyle(.secondary)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("Management")
                 .frame(width: 110, alignment: .leading)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(profiles.active.manageManually ? "Managed by hand" : "Mirrors your library")
-                Text(profiles.active.manageManually
-                     ? "Add and remove music yourself in the Manual tab. This iPod won't sync."
-                     : "Syncing adds what you've ticked and removes what you haven't.")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("", selection: managementBinding) {
+                    Text("Library mode").tag(false)
+                    Text("Manual mode").tag(true)
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+
+                Text(isManual
+                     ? "You add and remove music yourself in the Manual tab. This iPod never syncs, so nothing is removed behind your back."
+                     : "Syncing mirrors your library onto this iPod: ticked music is added, unticked music is removed.")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
-            Button(profiles.active.manageManually ? "Sync With Library…" : "Manage by Hand…") {
-                if profiles.active.manageManually {
-                    // Destructive direction — count first so the warning is true.
-                    strandedCount = strandedTrackCount()
-                    showLibraryConfirm = true
-                } else {
-                    profiles.setManageManually(true, for: profiles.active.key)
-                }
-            }
+            Spacer(minLength: 0)
         }
-        .confirmationDialog(
-            "Sync \u{201C}\(profiles.active.displayName)\u{201D} with your library?",
-            isPresented: $showLibraryConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Sync With Library", role: .destructive) {
-                profiles.setManageManually(false, for: profiles.active.key)
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text(strandedCount > 0
-                 ? "\(strandedCount) track\(strandedCount == 1 ? "" : "s") on this iPod \(strandedCount == 1 ? "isn't" : "aren't") in your library selection. The next sync will remove \(strandedCount == 1 ? "it" : "them"). Music in your library folder is unaffected."
-                 : "From now on this iPod mirrors your library: syncing adds what you've ticked and removes what you haven't.")
+        .sheet(isPresented: $showModeSheet) {
+            ModeChangeSheet(
+                target: proposedManual,
+                deviceName: profiles.active.displayName,
+                strandedCount: strandedCount,
+                onConfirm: {
+                    profiles.setManageManually(proposedManual, for: profiles.active.key)
+                    showModeSheet = false
+                },
+                onCancel: { showModeSheet = false }
+            )
         }
+    }
+
+    /// Intercepts the picker: reads the real state, but a write only *proposes*
+    /// the change and opens the explanation. The radio snaps back until the
+    /// sheet confirms.
+    private var managementBinding: Binding<Bool> {
+        Binding(
+            get: { profiles.active.manageManually },
+            set: { wanted in
+                guard wanted != profiles.active.manageManually else { return }
+                proposedManual = wanted
+                // Only the destructive direction needs a count, and it has to be
+                // taken now, while the selection still means something.
+                strandedCount = wanted ? 0 : strandedTrackCount()
+                showModeSheet = true
+            }
+        )
     }
 
     /// Tracks the device holds that a sync would remove — everything on it that
@@ -217,15 +220,27 @@ struct GeneralTabView: View {
                     }
                 }
 
-                Divider()
+                if controller.deviceInfo != nil {
+                    Divider()
+                    managementRow
+                }
 
-                syncModeRow
+                // The iTunes sync radio only means something for an iPod that
+                // mirrors the library. A manually managed one has no selection
+                // for it to govern, so it goes rather than sitting inert.
+                if !isManual {
+                    Divider()
+                    syncModeRow
+                }
 
                 Divider()
 
                 Text("Conversion")
                     .font(.subheadline)
                     .fontWeight(.medium)
+                if controller.deviceInfo != nil {
+                    qualityRow
+                }
                 ConversionSectionView(store: libraryStore)
             }
             .padding(.vertical, 4)
@@ -324,35 +339,6 @@ struct GeneralTabView: View {
         } message: {
             Text("All music, artwork, and database files will be deleted. This cannot be undone.")
         }
-    }
-
-    /// Deliberately a compact box rather than the full-height empty state it
-    /// used to be. Library settings sit directly below and have to stay on
-    /// screen with nothing plugged in — a 320pt placeholder would push them
-    /// under the fold on exactly the run where they matter most.
-    private var noDeviceSection: some View {
-        GroupBox("Device") {
-            HStack(spacing: 14) {
-                Image(systemName: "ipod")
-                    .font(.system(size: 40))
-                    .foregroundStyle(.tertiary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("No iPod connected")
-                        .font(.headline)
-                    Text("Plug an iPod in and put it in disk mode.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func byteCount(_ bytes: UInt64) -> String {
-        guard bytes > 0 else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .file)
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {

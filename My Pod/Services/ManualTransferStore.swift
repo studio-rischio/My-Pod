@@ -25,6 +25,73 @@ final class ManualTransferStore {
 
     private(set) var queuedTracks: [LibraryTrack] = []
     private(set) var deviceTracks: [TrackInfo] = []
+
+    /// Device tracks staged for deletion, applied on the next commit.
+    ///
+    /// Marked rather than deleted on click, so manual mode works the way library
+    /// mode does: you assemble a set of changes, see what they cost, and apply
+    /// them with one press. It also makes removal undoable right up until the
+    /// moment it isn't.
+    private(set) var markedForRemoval: Set<UInt32> = []
+
+    var hasPendingChanges: Bool { !queuedTracks.isEmpty || !markedForRemoval.isEmpty }
+
+    func markSelectedForRemoval() {
+        guard !isBusy, !selectedDeviceTrackIDs.isEmpty else { return }
+        markedForRemoval.formUnion(selectedDeviceTrackIDs)
+        selectedDeviceTrackIDs.removeAll()
+        recomputePending()
+    }
+
+    func unmarkForRemoval(_ ids: Set<UInt32>) {
+        guard !isBusy, !ids.isEmpty else { return }
+        markedForRemoval.subtract(ids)
+        recomputePending()
+    }
+
+    func clearMarkedForRemoval() {
+        guard !isBusy, !markedForRemoval.isEmpty else { return }
+        markedForRemoval.removeAll()
+        recomputePending()
+    }
+
+    func isMarkedForRemoval(_ track: TrackInfo) -> Bool { markedForRemoval.contains(track.id) }
+
+    /// What the staged changes would add to and free from the iPod, for the
+    /// storage bar's preview.
+    ///
+    /// Mirrors what `commit` will actually do rather than summing the queue
+    /// naively: tracks already on the device are skipped there, so they mustn't
+    /// be counted here, and sizes come from `estimatedIPodBytes`, which follows
+    /// the connected iPod's ceiling — a FLAC bound for a lossless iPod is
+    /// roughly 3x the size of the same file bound for an AAC one.
+    ///
+    /// Nothing is ever removed by adding, so the removing side stays zero;
+    /// manual removals happen through their own explicit action.
+    private(set) var pending = MusicLibraryStore.PendingBytes()
+
+    /// Recomputed on every change to the queue or the device's contents, rather
+    /// than computed in a view body — `estimatedIPodBytes` stats a cached file
+    /// per track, which is not something to do on each redraw.
+    private func recomputePending() {
+        guard hasPendingChanges else {
+            pending = MusicLibraryStore.PendingBytes()
+            return
+        }
+        let conversion = ConversionService(ceiling: DeviceProfileStore.shared.active.ceiling)
+        let onDevice = Set(deviceTracks.map { TrackKey(ipod: $0) })
+        var adding: UInt64 = 0
+        for track in queuedTracks where !onDevice.contains(TrackKey(library: track)) {
+            adding &+= conversion.estimatedIPodBytes(for: track)
+        }
+        // Removals are exact — `TrackInfo.sizeBytes` is the iPod's own record of
+        // the file it holds, not an estimate.
+        var removing: UInt64 = 0
+        for track in deviceTracks where markedForRemoval.contains(track.id) {
+            removing &+= UInt64(track.sizeBytes)
+        }
+        pending = MusicLibraryStore.PendingBytes(adding: adding, removing: removing)
+    }
     var selectedDeviceTrackIDs: Set<UInt32> = []
     var searchText = ""
     private(set) var state: State = .idle
@@ -67,12 +134,15 @@ final class ManualTransferStore {
     func refresh(device: IPodDevice?) async {
         guard let device else {
             deviceTracks = []
+            recomputePending()
             selectedDeviceTrackIDs.removeAll()
             return
         }
         let tracks = await device.tracks()
         deviceTracks = tracks.sorted(by: Self.deviceTrackSort)
+        recomputePending()
         selectedDeviceTrackIDs.formIntersection(Set(tracks.map(\.id)))
+        markedForRemoval.formIntersection(Set(tracks.map(\.id)))
     }
 
     func enqueue(urls: [URL]) async {
@@ -89,6 +159,7 @@ final class ManualTransferStore {
             byPath[track.url.standardizedFileURL.path] = track
         }
         queuedTracks = byPath.values.sorted(by: Self.libraryTrackSort)
+        recomputePending()
         state = .idle
         Log.ui.info("manual queue: \(queuedTracks.count) tracks")
     }
@@ -96,120 +167,82 @@ final class ManualTransferStore {
     func removeQueued(url: URL) {
         guard !isBusy else { return }
         queuedTracks.removeAll { $0.url == url }
+        recomputePending()
+    }
+
+    /// Drop a finished or failed result so the next run starts clean.
+    ///
+    /// Without this the sheet reopens showing the *last* transfer's outcome
+    /// instead of what's queued now — the state is what drives which pane it
+    /// renders. Mirrors `SyncEngine.reset`.
+    func resetState() {
+        guard !isBusy else { return }
+        state = .idle
     }
 
     func clearQueue() {
         guard !isBusy else { return }
         queuedTracks.removeAll()
+        recomputePending()
     }
 
-    /// Add only the queued tracks that are not already on the iPod. Unlike the
-    /// mirror Sync engine, this method never derives a removal set from what is
-    /// absent locally. Existing device tracks are therefore preserved unless
-    /// the user explicitly removes them through `removeSelected`.
-    func addQueued(to device: IPodDevice, freeBytes: UInt64) async {
-        guard !queuedTracks.isEmpty, !isBusy else { return }
+    /// Apply everything staged: marked removals first, then queued additions,
+    /// then one save.
+    ///
+    /// Removals lead for the same reason `SyncEngine` orders them that way —
+    /// they free space the additions may need, so a device that is nearly full
+    /// can still be rearranged in a single pass.
+    ///
+    /// Unlike the mirror this never *infers* a removal. Nothing is deleted
+    /// because it happens to be absent locally; only what the user explicitly
+    /// marked goes.
+    func commit(to device: IPodDevice, freeBytes: UInt64) async {
+        guard hasPendingChanges, !isBusy else { return }
         cancelRequested = false
 
         let existing = await device.tracks()
         var existingKeys = Set(existing.map { TrackKey(ipod: $0) })
+        let marked = deviceTracks.filter { markedForRemoval.contains($0.id) }
         var outcome = ManualTransferOutcome()
-        var plannedKeys = existingKeys
+
+        // What the additions actually amount to, once anything already present
+        // is discounted.
         var candidates: [LibraryTrack] = []
         for track in queuedTracks {
             let key = TrackKey(library: track)
-            guard !plannedKeys.contains(key) else {
+            if existingKeys.contains(key) {
                 outcome.skipped += 1
-                continue
+            } else {
+                candidates.append(track)
+                existingKeys.insert(key)
             }
-            plannedKeys.insert(key)
-            candidates.append(track)
         }
-
-        guard !candidates.isEmpty else {
-            queuedTracks.removeAll { existingKeys.contains(TrackKey(library: $0)) }
-            state = .finished(outcome)
-            return
-        }
+        // Rebuild, because a track counted as a candidate must not also read as
+        // already-present when the loop below inserts it for real.
+        existingKeys = Set(existing.map { TrackKey(ipod: $0) })
 
         let ceiling = DeviceProfileStore.shared.active.ceiling
         let conversionService = ConversionService(ceiling: ceiling)
-
         let requiredBytes = candidates.reduce(UInt64(0)) { total, track in
             total &+ conversionService.estimatedIPodBytes(for: track)
         }
-        guard requiredBytes <= freeBytes else {
-            let shortfall = requiredBytes - freeBytes
+        // Marked removals run first, so their space counts toward the budget.
+        let freedBytes = marked.reduce(UInt64(0)) { $0 &+ UInt64($1.sizeBytes) }
+        let budget = freeBytes &+ freedBytes
+        guard requiredBytes <= budget else {
+            let shortfall = requiredBytes - budget
             state = .failed(
-                "This add needs \(SyncEngine.byteString(shortfall)) more space than the iPod has."
+                "This needs \(SyncEngine.byteString(shortfall)) more space than the iPod has, even after the removals."
             )
             return
         }
 
-        try? FileManager.default.removeItem(at: artworkScratchDir)
-        try? FileManager.default.createDirectory(at: artworkScratchDir, withIntermediateDirectories: true)
-        let artworkLocator = ArtworkLocator(scratchDir: artworkScratchDir)
-
-        for (index, track) in candidates.enumerated() {
-            if cancelRequested { break }
-            state = .adding(
-                completed: index,
-                total: candidates.count,
-                detail: "\(track.artist) — \(track.title)"
-            )
-
-            do {
-                let playableURL = try await conversionService.convert(track)
-                let props = await AudioMetadataReader.read(playableURL)
-                // Use the original source as the embedded-art candidate. Cached
-                // afconvert output intentionally carries no tags or artwork.
-                let artwork = await artworkLocator.locate(
-                    albumDir: track.url.deletingLastPathComponent(),
-                    candidateAudioFile: track.url
-                )
-                try await device.addTrack(
-                    filepath: playableURL,
-                    title: track.title,
-                    artist: track.artist,
-                    album: track.album,
-                    trackNumber: track.trackNumber,
-                    durationMS: props.durationMS,
-                    bitrate: props.bitrate,
-                    sampleRate: props.sampleRate,
-                    filetype: props.filetypeString,
-                    artworkPath: artwork?.path
-                )
-                existingKeys.insert(TrackKey(library: track))
-                outcome.added += 1
-            } catch {
-                outcome.failed += 1
-                Log.sync.warning("manual add failed: \(track.url.lastPathComponent): \(error.localizedDescription)")
-            }
-        }
-
-        outcome.cancelled = cancelRequested
-        let saved = await saveAndFinish(device: device, outcome: outcome)
-        if saved {
-            let committed = existingKeys
-            queuedTracks.removeAll { committed.contains(TrackKey(library: $0)) }
-            await refresh(device: device)
-        }
-    }
-
-    /// Delete exactly the track IDs selected in the on-device browser. There
-    /// is intentionally no library diff here: manual mode must never infer
-    /// deletions from local files that happen not to be selected or present.
-    func removeSelected(from device: IPodDevice) async {
-        guard !selectedDeviceTrackIDs.isEmpty, !isBusy else { return }
-        cancelRequested = false
-        let selected = deviceTracks.filter { selectedDeviceTrackIDs.contains($0.id) }
-        var outcome = ManualTransferOutcome()
-
-        for (index, track) in selected.enumerated() {
+        // 1. Removals.
+        for (index, track) in marked.enumerated() {
             if cancelRequested { break }
             state = .removing(
                 completed: index,
-                total: selected.count,
+                total: marked.count,
                 detail: "\(track.artist) — \(track.title)"
             )
             do {
@@ -221,11 +254,59 @@ final class ManualTransferStore {
             }
         }
 
+        // 2. Additions.
+        if !candidates.isEmpty, !cancelRequested {
+            try? FileManager.default.removeItem(at: artworkScratchDir)
+            try? FileManager.default.createDirectory(at: artworkScratchDir, withIntermediateDirectories: true)
+            let artworkLocator = ArtworkLocator(scratchDir: artworkScratchDir)
+
+            for (index, track) in candidates.enumerated() {
+                if cancelRequested { break }
+                state = .adding(
+                    completed: index,
+                    total: candidates.count,
+                    detail: "\(track.artist) — \(track.title)"
+                )
+                do {
+                    let playableURL = try await conversionService.convert(track)
+                    let props = await AudioMetadataReader.read(playableURL)
+                    // Use the original source as the embedded-art candidate.
+                    // Cached afconvert output intentionally carries no tags.
+                    let artwork = await artworkLocator.locate(
+                        albumDir: track.url.deletingLastPathComponent(),
+                        candidateAudioFile: track.url
+                    )
+                    try await device.addTrack(
+                        filepath: playableURL,
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album,
+                        trackNumber: track.trackNumber,
+                        durationMS: props.durationMS,
+                        bitrate: props.bitrate,
+                        sampleRate: props.sampleRate,
+                        filetype: props.filetypeString,
+                        artworkPath: artwork?.path
+                    )
+                    existingKeys.insert(TrackKey(library: track))
+                    outcome.added += 1
+                } catch {
+                    outcome.failed += 1
+                    Log.sync.warning("manual add failed: \(track.url.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
+        }
+
+        // 3. One save for the whole operation.
         outcome.cancelled = cancelRequested
         let saved = await saveAndFinish(device: device, outcome: outcome)
         if saved {
+            let committed = existingKeys
+            queuedTracks.removeAll { committed.contains(TrackKey(library: $0)) }
+            markedForRemoval.removeAll()
             selectedDeviceTrackIDs.removeAll()
             await refresh(device: device)
+            recomputePending()
         }
     }
 

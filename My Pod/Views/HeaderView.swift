@@ -58,7 +58,11 @@ struct HeaderView: View {
             switch status {
             case .opening: return "Opening…"
             case .error(let m): return m
-            default: return "Connect an iPod via USB to begin"
+            // The General tab used to carry this hint; it no longer has an
+            // empty state to put it in, and it matters — a click-wheel iPod
+            // that isn't in disk mode never mounts, so the app simply never
+            // sees it and the user has no idea why.
+            default: return "Connect an iPod via USB and put it in disk mode"
             }
         }
         // Lead with the installed capacity — on a re-drived iPod the model's
@@ -72,8 +76,13 @@ struct HeaderView: View {
         if hasNonStockDrive {
             cap += String(format: " (%.0f GB stock)", info.capacityGB)
         }
-        let pieces = [info.modelName, info.generation, cap, "\(info.trackCount) tracks"]
-            .filter { !$0.isEmpty }
+        let pieces = [
+            info.modelName,
+            info.generation,
+            cap,
+            "\(info.trackCount) track\(info.trackCount == 1 ? "" : "s")",
+            "\(info.playlistCount) playlist\(info.playlistCount == 1 ? "" : "s")",
+        ].filter { !$0.isEmpty }
         return pieces.joined(separator: " · ")
     }
 

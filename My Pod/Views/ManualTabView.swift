@@ -5,8 +5,6 @@ struct ManualTabView: View {
     let controller: IPodController
     @Bindable var store: ManualTransferStore
 
-    @State private var showAddConfirm = false
-    @State private var showRemoveConfirm = false
     @State private var dropTargeted = false
 
     private var profileStore: DeviceProfileStore { .shared }
@@ -14,22 +12,24 @@ struct ManualTabView: View {
     var body: some View {
         Group {
             if controller.status == .ready, let device = controller.device {
+                // What's on the iPod leads, and the changes you're staging sit
+                // beside it — you read the device first, then act on it.
                 HStack(alignment: .top, spacing: 0) {
-                    addPane(device: device)
+                    devicePane(device: device)
                         .frame(
-                            minWidth: 330,
-                            idealWidth: 390,
-                            maxWidth: 520,
+                            minWidth: 450,
+                            maxWidth: .infinity,
                             maxHeight: .infinity,
                             alignment: .topLeading
                         )
 
                     Divider()
 
-                    devicePane(device: device)
+                    addPane()
                         .frame(
-                            minWidth: 450,
-                            maxWidth: .infinity,
+                            minWidth: 330,
+                            idealWidth: 390,
+                            maxWidth: 520,
                             maxHeight: .infinity,
                             alignment: .topLeading
                         )
@@ -58,7 +58,7 @@ struct ManualTabView: View {
         }
     }
 
-    private func addPane(device: IPodDevice) -> some View {
+    private func addPane() -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add Music")
                 .font(.headline)
@@ -78,11 +78,17 @@ struct ManualTabView: View {
             Divider()
 
             if store.queuedTracks.isEmpty {
+                // Spans the pane deliberately. `ContentUnavailableView` centres
+                // its own contents, but only within whatever width it is given —
+                // and the enclosing VStack is `.leading`, so at its intrinsic
+                // width it sits left of centre. It only looked right at the
+                // minimum window size, where the two happen to coincide.
                 ContentUnavailableView(
                     "No Music Queued",
                     systemImage: "music.note",
                     description: Text("Drop files or a folder above. Adding music never removes tracks already on the iPod.")
                 )
+                .frame(maxWidth: .infinity)
             } else {
                 List(store.queuedTracks) { track in
                     HStack(spacing: 8) {
@@ -114,39 +120,19 @@ struct ManualTabView: View {
                 }
             }
 
-            operationStatus
 
-            HStack {
-                if store.isBusy {
+            // No primary button here on purpose. Committing the queue is the
+            // Sync button in the bottom bar — the same place, and the same
+            // gesture, as every other "make the iPod match what I set up". A
+            // second prominent button competing with it would be the surprise.
+            if store.isBusy {
+                HStack {
                     Button("Cancel") { store.cancel() }
+                    Spacer()
                 }
-                Spacer()
-                Button("Add \(store.queuedTracks.count) to iPod") {
-                    showAddConfirm = true
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.queuedTracks.isEmpty || store.isBusy)
             }
         }
         .padding(16)
-        .confirmationDialog(
-            "Add \(store.queuedTracks.count) track\(store.queuedTracks.count == 1 ? "" : "s") to this iPod?",
-            isPresented: $showAddConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Add to iPod") {
-                Task {
-                    await store.addQueued(
-                        to: device,
-                        freeBytes: controller.storage.free
-                    )
-                    controller.refresh()
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Existing music is preserved. Tracks already on the iPod are skipped; nothing is removed.")
-        }
     }
 
     private func devicePane(device: IPodDevice) -> some View {
@@ -168,47 +154,53 @@ struct ManualTabView: View {
                 .disabled(store.isBusy)
             }
 
+            // Marked rows are struck through and dimmed rather than removed
+            // from the list: they're still on the iPod until Sync runs, and
+            // hiding them would misrepresent what the device currently holds.
             Table(store.filteredDeviceTracks, selection: $store.selectedDeviceTrackIDs) {
                 TableColumn("Title") { track in
                     Text(track.title.isEmpty ? "Untitled" : track.title)
+                        .strikethrough(store.isMarkedForRemoval(track))
+                        .foregroundStyle(store.isMarkedForRemoval(track) ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                 }
                 TableColumn("Artist") { track in
                     Text(track.artist)
+                        .strikethrough(store.isMarkedForRemoval(track))
+                        .foregroundStyle(store.isMarkedForRemoval(track) ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
                 }
                 TableColumn("Album") { track in
                     Text(track.album)
+                        .strikethrough(store.isMarkedForRemoval(track))
+                        .foregroundStyle(store.isMarkedForRemoval(track) ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
                 }
             }
             .searchable(text: $store.searchText, prompt: "Search iPod")
 
             HStack {
-                Text("\(store.selectedDeviceTrackIDs.count) selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                Spacer()
-                Button("Remove Selected…", role: .destructive) {
-                    showRemoveConfirm = true
+                if store.markedForRemoval.isEmpty {
+                    Text("\(store.selectedDeviceTrackIDs.count) selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                } else {
+                    Text("\(store.markedForRemoval.count) marked for removal")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .monospacedDigit()
+                    Button("Undo") { store.clearMarkedForRemoval() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .disabled(store.isBusy)
                 }
-                .disabled(store.selectedDeviceTrackIDs.isEmpty || store.isBusy)
+                Spacer()
+                // Marks rather than deletes: nothing reaches the iPod until Sync,
+                // so a mis-click is undoable and the cost shows up in the storage
+                // bar first — the same bargain library mode offers.
+                Button("Remove Selected") { store.markSelectedForRemoval() }
+                    .disabled(store.selectedDeviceTrackIDs.isEmpty || store.isBusy)
             }
         }
         .padding(16)
-        .confirmationDialog(
-            "Remove \(store.selectedDeviceTrackIDs.count) selected track\(store.selectedDeviceTrackIDs.count == 1 ? "" : "s") from this iPod?",
-            isPresented: $showRemoveConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Remove from iPod", role: .destructive) {
-                Task {
-                    await store.removeSelected(from: device)
-                    controller.refresh()
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Only the selected tracks are removed. All other music on the iPod is left untouched.")
-        }
     }
 
     private var dropZone: some View {
@@ -241,45 +233,6 @@ struct ManualTabView: View {
     }
 
     @ViewBuilder
-    private var operationStatus: some View {
-        switch store.state {
-        case .idle:
-            EmptyView()
-        case .loading:
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Reading files…").font(.caption).foregroundStyle(.secondary)
-            }
-        case let .adding(completed, total, detail):
-            progressRow(label: "Adding", completed: completed, total: total, detail: detail)
-        case let .removing(completed, total, detail):
-            progressRow(label: "Removing", completed: completed, total: total, detail: detail)
-        case .saving:
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Saving iPod database…").font(.caption).foregroundStyle(.secondary)
-            }
-        case let .finished(outcome):
-            Text(summary(outcome))
-                .font(.caption)
-                .foregroundStyle(outcome.failed > 0 || outcome.cancelled ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
-        case let .failed(message):
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.red)
-        }
-    }
-
-    private func progressRow(label: String, completed: Int, total: Int, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ProgressView(value: Double(completed), total: Double(max(total, 1)))
-            Text("\(label) \(completed) of \(total) — \(detail)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-    }
-
     private var unavailableState: some View {
         ContentUnavailableView(
             controller.status == .opening ? "Opening iPod…" : "No iPod Connected",
@@ -313,8 +266,4 @@ struct ManualTabView: View {
         }
     }
 
-    private func summary(_ outcome: ManualTransferOutcome) -> String {
-        let prefix = outcome.cancelled ? "Cancelled — " : "Last operation: "
-        return "\(prefix)\(outcome.added) added, \(outcome.removed) removed, \(outcome.skipped) already present, \(outcome.failed) failed"
-    }
 }
