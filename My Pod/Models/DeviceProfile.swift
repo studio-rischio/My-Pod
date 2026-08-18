@@ -26,7 +26,53 @@ nonisolated struct DeviceProfile: Codable, Sendable, Equatable, Identifiable {
     var ceiling: ConversionCeiling
     var lastSeen: Date
 
+    /// Whether this iPod is managed by hand rather than mirrored from the
+    /// library.
+    ///
+    /// The two are mutually exclusive, not composable: a mirror has an opinion
+    /// about what the whole device should hold, and manual management says the
+    /// device owns itself. So this doesn't soften the sync — it decides which
+    /// tabs exist at all. See `MainTabView`.
+    var manageManually: Bool = false
+
     var id: UUID { key }
+
+    // MARK: - Decoding
+
+    /// Written by hand because the synthesized decoder **throws** on a missing
+    /// key even when the property has a default — verified, not assumed. Profiles
+    /// written before `manageManually` existed have no such key, and
+    /// `DeviceProfileStore.load` decodes with `try?`, so the synthesized version
+    /// would swallow the error and silently reset every iPod's quality setting
+    /// and selection. Any field added here later needs the same treatment.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(UUID.self, forKey: .key)
+        identifiers = try c.decode(Set<String>.self, forKey: .identifiers)
+        displayName = try c.decode(String.self, forKey: .displayName)
+        modelName = try c.decode(String.self, forKey: .modelName)
+        ceiling = try c.decode(ConversionCeiling.self, forKey: .ceiling)
+        lastSeen = try c.decode(Date.self, forKey: .lastSeen)
+        manageManually = try c.decodeIfPresent(Bool.self, forKey: .manageManually) ?? false
+    }
+
+    init(
+        key: UUID,
+        identifiers: Set<String>,
+        displayName: String,
+        modelName: String,
+        ceiling: ConversionCeiling,
+        lastSeen: Date,
+        manageManually: Bool = false
+    ) {
+        self.key = key
+        self.identifiers = identifiers
+        self.displayName = displayName
+        self.modelName = modelName
+        self.ceiling = ceiling
+        self.lastSeen = lastSeen
+        self.manageManually = manageManually
+    }
 
     /// The profile in use when no iPod is connected, and the template every
     /// newly-seen device is seeded from.

@@ -6,6 +6,8 @@ struct GeneralTabView: View {
     @Bindable var playlistStore: PlaylistStore
     @State private var showResetConfirm = false
     @State private var showQualitySheet = false
+    @State private var showLibraryConfirm = false
+    @State private var strandedCount = 0
     @State private var profiles = DeviceProfileStore.shared
 
     var body: some View {
@@ -64,10 +66,85 @@ struct GeneralTabView: View {
                 Divider().padding(.vertical, 2)
 
                 qualityRow
+                managementRow
             }
             .padding(.vertical, 4)
         }
 
+    }
+
+    /// Whether this iPod mirrors the library or is managed by hand.
+    ///
+    /// The switch is the point of the whole design. Turning it *off* is
+    /// destructive — the next sync removes everything on the device that isn't
+    /// in this iPod's selection — and a deliberate flip is the only moment the
+    /// app can honestly say so. Left as a silent rule, that same loss happens at
+    /// sync time to someone with no idea anything changed.
+    private var managementRow: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("Music")
+                .foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profiles.active.manageManually ? "Managed by hand" : "Mirrors your library")
+                Text(profiles.active.manageManually
+                     ? "Add and remove music yourself in the Manual tab. This iPod won't sync."
+                     : "Syncing adds what you've ticked and removes what you haven't.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button(profiles.active.manageManually ? "Sync With Library…" : "Manage by Hand…") {
+                if profiles.active.manageManually {
+                    // Destructive direction — count first so the warning is true.
+                    strandedCount = strandedTrackCount()
+                    showLibraryConfirm = true
+                } else {
+                    profiles.setManageManually(true, for: profiles.active.key)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Sync \u{201C}\(profiles.active.displayName)\u{201D} with your library?",
+            isPresented: $showLibraryConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Sync With Library", role: .destructive) {
+                profiles.setManageManually(false, for: profiles.active.key)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text(strandedCount > 0
+                 ? "\(strandedCount) track\(strandedCount == 1 ? "" : "s") on this iPod \(strandedCount == 1 ? "isn't" : "aren't") in your library selection. The next sync will remove \(strandedCount == 1 ? "it" : "them"). Music in your library folder is unaffected."
+                 : "From now on this iPod mirrors your library: syncing adds what you've ticked and removes what you haven't.")
+        }
+    }
+
+    /// Tracks the device holds that a sync would remove — everything on it that
+    /// isn't in this profile's selection. Counted at the moment of asking rather
+    /// than tracked, because it's only ever needed for this one sentence.
+    private func strandedTrackCount() -> Int {
+        guard let snapshot = controller.snapshot else { return 0 }
+        if libraryStore.syncMode == .entireLibrary {
+            var keys: Set<TrackKey> = []
+            for artist in libraryStore.library.artists {
+                for album in artist.albums {
+                    for track in album.tracks { keys.insert(TrackKey(library: track)) }
+                }
+            }
+            return snapshot.bytesByTrackKey.keys.filter { !keys.contains($0) }.count
+        }
+        let selected = libraryStore.effectiveSelectedPaths
+        var keys: Set<TrackKey> = []
+        for artist in libraryStore.library.artists {
+            for album in artist.albums {
+                for track in album.tracks where selected.contains(track.url.path) {
+                    keys.insert(TrackKey(library: track))
+                }
+            }
+        }
+        return snapshot.bytesByTrackKey.keys.filter { !keys.contains($0) }.count
     }
 
     /// This iPod's quality ceiling.

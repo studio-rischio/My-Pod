@@ -115,6 +115,28 @@ final class DeviceProfileStore {
         collectUnusedCaches(libraryRoot: libraryRoot)
     }
 
+    /// Switch an iPod between mirroring the library and being managed by hand.
+    ///
+    /// Deliberately not offered for the default profile: it's the settings used
+    /// when *no* iPod is attached, and manual management is meaningless without
+    /// a device to manage.
+    ///
+    /// Turning it **off** is the destructive direction — the next sync removes
+    /// everything on the device that isn't in this profile's selection. The
+    /// caller is responsible for warning first, which is the whole reason this
+    /// is a mode switch rather than a silent rule: an explicit flip is a moment
+    /// you can attach a warning to, where sync time is not.
+    func setManageManually(_ manual: Bool, for key: UUID) {
+        guard key != DeviceProfile.defaultKey,
+              let index = devices.firstIndex(where: { $0.key == key }),
+              devices[index].manageManually != manual else { return }
+        devices[index].manageManually = manual
+        if active.key == key { active.manageManually = manual }
+        save()
+        let name = devices[index].displayName
+        Log.device.info("profile \(name): \(manual ? "managed by hand" : "mirrors the library")")
+    }
+
     /// Forget a device: its profile, and every per-device set stored under it.
     func forget(_ key: UUID, libraryRoot: URL?) {
         guard key != DeviceProfile.defaultKey,
@@ -146,11 +168,22 @@ final class DeviceProfileStore {
     // MARK: - Persistence
 
     private func load() {
-        guard let data = defaults.data(forKey: devicesKey),
-              let stored = try? JSONDecoder().decode([DeviceProfile].self, from: data) else { return }
-        // Defensive: the default profile is synthesized, never stored, and its
-        // selection keys belong to it alone.
-        devices = stored.filter { !$0.isDefault }
+        guard let data = defaults.data(forKey: devicesKey) else { return }
+        do {
+            // Defensive: the default profile is synthesized, never stored, and
+            // its selection keys belong to it alone.
+            devices = try JSONDecoder().decode([DeviceProfile].self, from: data)
+                .filter { !$0.isDefault }
+            Log.device.info("loaded \(self.devices.count) iPod profile(s)")
+        } catch {
+            // Loud, because the quiet version is a disaster: every iPod's
+            // quality setting and selection silently reverts to the default and
+            // the next connect looks like a brand-new device. A field added to
+            // `DeviceProfile` without a `decodeIfPresent` fallback lands exactly
+            // here — the synthesized decoder throws on a missing key even when
+            // the property has a default value.
+            Log.device.error("couldn't read stored iPod profiles — they will be recreated from defaults: \(error)")
+        }
     }
 
     private func save() {

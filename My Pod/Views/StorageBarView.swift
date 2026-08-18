@@ -6,6 +6,10 @@ struct StorageBarView: View {
     /// attached, which renders the plain bar.
     var pending: MusicLibraryStore.PendingBytes = .init()
     let canSync: Bool
+    /// False for a manually managed iPod, where syncing isn't a thing that can
+    /// happen. Hidden rather than disabled: a permanently greyed button reads as
+    /// something you could enable, and invites hunting for how.
+    let showsSync: Bool
     let onSync: () -> Void
 
     /// Space the additions have to fit into. Removals run before additions, so
@@ -142,12 +146,14 @@ struct StorageBarView: View {
                     .foregroundStyle(.secondary)
                     .help("Capacity of the mounted volume. On an iPod whose drive has been replaced this is larger than the model's stock size — see the General tab.")
             }
-            Button(action: onSync) {
-                Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+            if showsSync {
+                Button(action: onSync) {
+                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(!canSync)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .disabled(!canSync)
         }
     }
 

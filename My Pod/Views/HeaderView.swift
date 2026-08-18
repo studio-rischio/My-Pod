@@ -89,13 +89,23 @@ struct HeaderView: View {
             Text(profile.isDefault ? "Default settings" : "Editing \(profile.displayName)")
                 .font(.caption)
                 .fontWeight(.medium)
-            Text(profile.ceiling.shortTitle)
+            Text(profile.manageManually
+                 ? "Managed by hand \u{00B7} \(profile.ceiling.shortTitle)"
+                 : profile.ceiling.shortTitle)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .help(profile.isDefault
-              ? "No iPod is connected, so the tabs below show the settings and selection used for a new iPod. Connect one to edit its own."
-              : "Ticks and quality below apply to this iPod. Each iPod keeps its own.")
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        if profile.isDefault {
+            return "No iPod is connected, so the tabs below show the settings and selection used for a new iPod. Connect one to edit its own."
+        }
+        if profile.manageManually {
+            return "This iPod is managed by hand: you add and remove music yourself in the Manual tab, and it never syncs with your library. The quality setting still applies to music you add."
+        }
+        return "Ticks and quality below apply to this iPod. Each iPod keeps its own."
     }
 
     @ViewBuilder

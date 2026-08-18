@@ -43,6 +43,7 @@ struct ContentView: View {
                 breakdown: controller.storage,
                 pending: libraryStore.pending,
                 canSync: canSync,
+                showsSync: !profileStore.active.manageManually,
                 onSync: startSync
             )
         }
@@ -110,8 +111,14 @@ struct ContentView: View {
             : playlistStore.selectedPlaylists
     }
 
+    /// A manually managed iPod is never synced — that's what the mode means, and
+    /// the Music tab it would sync from isn't even on screen. The storage bar
+    /// stays: capacity matters more here, not less, because manual adds have no
+    /// plan step to catch overfilling before it starts.
     private var canSync: Bool {
-        controller.status == .ready && libraryStore.libraryRoot != nil
+        controller.status == .ready
+            && libraryStore.libraryRoot != nil
+            && !profileStore.active.manageManually
     }
 
     private func startSync() {

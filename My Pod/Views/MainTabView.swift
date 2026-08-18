@@ -16,6 +16,18 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .manual: "hand.draw"
         }
     }
+
+    /// Which tabs exist for an iPod in this mode.
+    ///
+    /// Mirroring the library and managing by hand are mutually exclusive, so
+    /// only one set is ever reachable. That's what stops the two models being
+    /// used against each other: a manually managed iPod has no Music tab to
+    /// tick and no Sync button to press, so nothing can quietly remove what was
+    /// added by hand. Sync becomes unreachable rather than conditionally
+    /// modified, which is one fewer branch to keep correct forever.
+    static func visible(manageManually: Bool) -> [MainTab] {
+        manageManually ? [.general, .manual] : [.general, .music, .playlists]
+    }
 }
 
 struct MainTabView: View {
@@ -25,9 +37,15 @@ struct MainTabView: View {
     @Bindable var manualStore: ManualTransferStore
     @State private var selection: MainTab = .general
 
+    private var profileStore: DeviceProfileStore { .shared }
+
+    private var tabs: [MainTab] {
+        MainTab.visible(manageManually: profileStore.active.manageManually)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            TabBar(selection: $selection)
+            TabBar(tabs: tabs, selection: $selection)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
 
@@ -59,6 +77,13 @@ struct MainTabView: View {
         .onChange(of: selection) { _, new in
             Log.ui.debug("tab changed: \(new.rawValue)")
         }
+        // Swapping iPods can pull the current tab out from under the user — a
+        // manually managed device has no Music tab. Fall back rather than
+        // rendering a tab that is no longer in the bar.
+        .onChange(of: tabs, initial: true) { _, available in
+            guard !available.contains(selection) else { return }
+            selection = available.first ?? .general
+        }
     }
 }
 
@@ -66,11 +91,12 @@ struct MainTabView: View {
 /// segmented `Picker` only renders title OR icon, not both, so we draw it
 /// ourselves to match the requested design.
 private struct TabBar: View {
+    let tabs: [MainTab]
     @Binding var selection: MainTab
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(MainTab.allCases) { tab in
+            ForEach(tabs) { tab in
                 TabBarItem(
                     tab: tab,
                     selected: selection == tab,

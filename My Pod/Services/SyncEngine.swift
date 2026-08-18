@@ -64,6 +64,20 @@ final class SyncEngine {
         state = .planning
         cancelRequested = false
         conversionService = ConversionService(ceiling: ceiling)
+
+        // Backstop, not the mechanism. A manually managed iPod shows no Music
+        // tab and no Sync button, so this should be unreachable — but the whole
+        // point of the mode is that a mirror must never run against a device
+        // that owns its own contents, and "unreachable" is a property of today's
+        // UI rather than of the engine.
+        guard !DeviceProfileStore.shared.active.manageManually else {
+            Log.sync.error("refusing to plan: this iPod is managed by hand")
+            state = .failed(
+                "This iPod is set to be managed by hand, so it doesn't sync with your library. "
+                + "Use the Manual tab to add or remove music, or switch it back in the General tab."
+            )
+            return
+        }
         let iPodTracks = await device.tracks()
         let devicePlaylists = await device.userPlaylists()
 
