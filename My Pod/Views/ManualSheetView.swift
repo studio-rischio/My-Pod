@@ -158,6 +158,9 @@ struct ManualSheetView: View {
             if outcome.removed > 0 { summaryRow("Removed", count: outcome.removed, color: .red) }
             if outcome.skipped > 0 { summaryRow("Already on iPod", count: outcome.skipped, color: .secondary) }
             if outcome.failed > 0 { summaryRow("Failed", count: outcome.failed, color: .orange) }
+            if outcome.artworkUpdated > 0 {
+                summaryRow("Cover art updated", count: outcome.artworkUpdated, color: .orange)
+            }
             if outcome.cancelled {
                 Label(
                     "Everything transferred before you cancelled has been saved to the iPod.",

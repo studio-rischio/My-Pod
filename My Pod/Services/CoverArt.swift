@@ -181,11 +181,24 @@ nonisolated enum CoverArt {
     /// Write `image` as `<albumDirectory>/cover.jpg`.
     @discardableResult
     static func write(_ image: CGImage, toAlbum albumDirectory: URL) throws -> URL {
-        guard isWritable(albumDirectory) else { throw WriteError.notWritable(albumDirectory) }
-        guard let data = jpegData(image) else { throw WriteError.encodingFailed }
+        guard isWritable(albumDirectory) else {
+            Log.artwork.error("can't write cover art: \(albumDirectory.path) is not writable")
+            throw WriteError.notWritable(albumDirectory)
+        }
+        guard let data = jpegData(image) else {
+            Log.artwork.error("can't write cover art: JPEG encoding failed")
+            throw WriteError.encodingFailed
+        }
         let destination = albumDirectory.appendingPathComponent(fileName)
-        try data.write(to: destination, options: .atomic)
-        Log.artwork.info("wrote \(fileName) (\(data.count) bytes) to \(albumDirectory.lastPathComponent)")
+        do {
+            try data.write(to: destination, options: .atomic)
+        } catch {
+            Log.artwork.error("writing \(fileName) to \(albumDirectory.path) failed: \(error.localizedDescription)")
+            throw error
+        }
+        Log.artwork.info(
+            "wrote \(fileName) (\(image.width)×\(image.height), \(data.count) bytes) to \(albumDirectory.lastPathComponent)"
+        )
         return destination
     }
 

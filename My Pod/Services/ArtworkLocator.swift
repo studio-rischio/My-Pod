@@ -19,7 +19,12 @@ actor ArtworkLocator {
     /// Needed after `cover.jpg` is written: the cache holds either nil or the
     /// path of the image the folder used before, and both are now wrong.
     func invalidate(albumDir: URL) {
-        cache[albumDir.standardizedFileURL.path] = nil
+        // `removeValue`, not `cache[key] = nil`. The cache stores an *optional*
+        // URL, where a stored nil means "looked, found nothing" and is a real
+        // cached answer. Assigning nil through the subscript happens to remove
+        // the entry rather than store one, but the two meanings are one keystroke
+        // apart — say which one is meant.
+        cache.removeValue(forKey: albumDir.standardizedFileURL.path)
     }
 
     func locate(albumDir: URL, candidateAudioFile: URL) async -> URL? {

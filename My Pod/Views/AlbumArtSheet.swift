@@ -97,6 +97,7 @@ struct AlbumArtSheet: View {
         .onAppear {
             artistQuery = album.artist
             albumQuery = album.name
+            Log.ui.info("user opened Album Art for \(album.artist) — \(album.name)")
         }
     }
 
@@ -170,6 +171,7 @@ struct AlbumArtSheet: View {
                 Button("Cancel") { dismiss() }
                 Button("Save") {
                     if CoverArt.existingCover(in: album.directory) != nil {
+                        Log.ui.info("user clicked Save with a cover.jpg already present — confirming")
                         showOverwriteConfirm = true
                     } else {
                         save()
@@ -186,8 +188,13 @@ struct AlbumArtSheet: View {
             isPresented: $showOverwriteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Replace", role: .destructive) { save() }
-            Button("Cancel", role: .cancel) {}
+            Button("Replace", role: .destructive) {
+                Log.ui.info("user confirmed replacing the existing cover.jpg")
+                save()
+            }
+            Button("Cancel", role: .cancel) {
+                Log.ui.info("user cancelled replacing the existing cover.jpg")
+            }
         } message: {
             Text("“\(album.name)” already has a cover.jpg. The old file is overwritten and can't be recovered.")
         }
@@ -317,13 +324,16 @@ struct AlbumArtSheet: View {
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 12)
-        .task(id: album.id) {
+        // No `id:` — the sheet is opened for one album and never changes which.
+        // The guard is what matters: switching tabs away and back rebuilds this
+        // view, and re-reading every file each time would be an AVFoundation
+        // load per track for nothing.
+        .task {
             guard !scannedFiles else { return }
             scanningFiles = true
             embedded = await EmbeddedArtwork.scan(album: album)
             scanningFiles = false
             scannedFiles = true
-            Log.artwork.info("embedded scan: \(embedded.count) distinct image(s) in \(album.name)")
         }
     }
 
@@ -440,6 +450,7 @@ struct AlbumArtSheet: View {
 
     private func runSearch() {
         guard hasQuery else { return }
+        Log.ui.info("user clicked Search for artwork")
         error = nil
         results = []
         searching = true
@@ -458,6 +469,7 @@ struct AlbumArtSheet: View {
     }
 
     private func choose(_ result: ArtworkSearchResult) {
+        Log.ui.info("user picked a search result from \(result.source): \(result.title)")
         error = nil
         loading = true
         Task {
@@ -471,6 +483,7 @@ struct AlbumArtSheet: View {
     }
 
     private func choose(_ candidate: EmbeddedArtworkCandidate) {
+        Log.ui.info("user picked an image embedded in \(candidate.trackCount) file(s)")
         error = nil
         loading = true
         finish(
@@ -534,6 +547,7 @@ struct AlbumArtSheet: View {
             let (data, _) = try await URLSession.shared.data(from: url)
             finish(CoverArt.load(data: data), label: url.lastPathComponent)
         } catch {
+            Log.artwork.warning("dragged image couldn't be downloaded: \(error.localizedDescription)")
             self.error = "That image couldn't be downloaded: \(error.localizedDescription)"
             loading = false
         }
@@ -542,13 +556,17 @@ struct AlbumArtSheet: View {
     private func finish(_ image: CGImage?, label: String) {
         loading = false
         guard let image else {
+            Log.artwork.warning("dropped or chosen item couldn't be decoded as an image (\(label.isEmpty ? "unknown source" : label))")
             error = "That doesn't look like an image My Pod can read."
             return
         }
+        Log.artwork.info("loaded candidate cover: \(label) (\(image.width)×\(image.height))")
         source = image
         sourceLabel = "\(label) — \(image.width) × \(image.height)"
-        // A square source has nothing to choose between, and crop is the no-op
-        // there.
+        // Every new image starts at crop, including one chosen after the user
+        // set fit for the last one: fit is a decision about a particular
+        // picture's shape, not a preference, and carrying it over would pad an
+        // image that didn't need it.
         fill = .crop
         rebuildPreview()
     }
@@ -561,9 +579,11 @@ struct AlbumArtSheet: View {
 
     private func save() {
         guard let squared = preview else {
+            Log.artwork.error("save aborted: the squared image is missing")
             error = "That image couldn't be squared."
             return
         }
+        Log.ui.info("user saved cover art for \(album.artist) — \(album.name) (\(fill.rawValue))")
         // Read before writing: afterwards `cover.jpg` is the top-priority file
         // and would report itself.
         let shadowed = CoverArt.shadowedImage(in: album.directory)

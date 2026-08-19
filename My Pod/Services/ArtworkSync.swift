@@ -72,6 +72,7 @@ enum ArtworkSync {
 
     static func markSynced(_ profile: DeviceProfile, at date: Date = Date()) {
         defaults.set(date, forKey: baselineKey(profile))
+        Log.artwork.debug("artwork baseline for \"\(profile.displayName)\" moved to \(date)")
     }
 
     // MARK: - Explicit queue
@@ -96,12 +97,22 @@ enum ArtworkSync {
     @discardableResult
     static func enqueueForNextSync(albumID: String, store: DeviceProfileStore) -> [String] {
         let targets = store.active.isDefault ? store.devices : [store.active]
+        if targets.isEmpty {
+            // Not an error: this is a first run, or the user has never plugged
+            // an iPod in. The file on disk is still newer than any baseline a
+            // future device will be given, so it isn't lost.
+            Log.artwork.info("artwork for \"\(albumID)\" not queued — no iPod has been seen yet")
+        }
         for profile in targets { enqueue(albumID, for: profile) }
         return targets.map(\.displayName)
     }
 
     static func clearQueue(for profile: DeviceProfile) {
+        let pending = queued(for: profile).count
         defaults.removeObject(forKey: queueKey(profile))
+        if pending > 0 {
+            Log.artwork.info("cleared \(pending) queued artwork request(s) for \"\(profile.displayName)\"")
+        }
     }
 
     /// Drop both keys when a device is forgotten, so they don't outlive it.
@@ -137,9 +148,26 @@ enum ArtworkSync {
         var out: [ArtworkUpdate] = []
         for artist in library.artists {
             for album in artist.albums {
-                let forced = queued.contains(album.id)
-                guard let cover = ArtworkLocator.imageInDirectory(album.directory) else { continue }
-                if !forced {
+                // Cheapest test first, deliberately. An album the device
+                // doesn't hold can't have its artwork refreshed, and this is
+                // a dictionary lookup where the two tests below are a directory
+                // enumeration and a stat. On a library where only part is
+                // synced, most albums exit here and never touch the disk.
+                let trackIDs = album.tracks.flatMap { idsByKey[TrackKey(library: $0)] ?? [] }
+                guard !trackIDs.isEmpty else { continue }
+
+                guard let cover = ArtworkLocator.imageInDirectory(album.directory) else {
+                    if queued.contains(album.id) {
+                        // Asked for, but there is no file to send. Only reachable
+                        // if the image was deleted between queueing and syncing —
+                        // the button that queues is gated on one existing.
+                        Log.artwork.warning(
+                            "queued artwork for \(album.artist) — \(album.name) has no image file in the folder; skipping"
+                        )
+                    }
+                    continue
+                }
+                if !queued.contains(album.id) {
                     guard let since = changedSince,
                           let modified = try? cover.resourceValues(
                               forKeys: [.contentModificationDateKey]
@@ -147,8 +175,6 @@ enum ArtworkSync {
                           modified > since
                     else { continue }
                 }
-                let trackIDs = album.tracks.flatMap { idsByKey[TrackKey(library: $0)] ?? [] }
-                guard !trackIDs.isEmpty else { continue }
                 out.append(ArtworkUpdate(
                     albumID: album.id,
                     artist: album.artist,
@@ -173,6 +199,9 @@ enum ArtworkSync {
     /// a sync that has already mutated the database.
     static func apply(_ update: ArtworkUpdate, to device: IPodDevice) async -> Bool {
         var applied = false
+        Log.artwork.debug(
+            "applying \(update.coverURL.lastPathComponent) to \(update.trackIDs.count) track(s) of \(update.artist) — \(update.album)"
+        )
         for trackID in update.trackIDs {
             do {
                 try await device.setTrackArtwork(trackID: trackID, imagePath: update.coverURL.path)

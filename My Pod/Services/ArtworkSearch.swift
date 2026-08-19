@@ -38,7 +38,7 @@ nonisolated enum ArtworkSearch {
         var errorDescription: String? {
             switch self {
             case .emptyQuery: return "Type something to search for."
-            case .nothingFound: return "No covers found for that. Try a shorter search — just the album name often works better."
+            case .nothingFound: return "No covers found. Try clearing the artist field and searching on the album name alone, or check the album's spelling."
             case .transport(let message): return "The search couldn't be completed: \(message)"
             }
         }
@@ -72,13 +72,42 @@ nonisolated enum ArtworkSearch {
         let artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         let album = album.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artist.isEmpty || !album.isEmpty else { throw SearchError.emptyQuery }
+        Log.artwork.info("search: \"\(artist)\" — \"\(album)\"")
 
-        let apple = try await searchAppleMusic([artist, album].filter { !$0.isEmpty }.joined(separator: " "))
-        if !apple.isEmpty { return apple }
+        // A failure at Apple is not a reason to skip the archive. They're
+        // separate services: a 5xx or a timeout at one says nothing about the
+        // other, and the fallback exists precisely for the material Apple is
+        // worst at. The error is kept rather than dropped, so if the archive
+        // also comes up empty the user is told what actually went wrong instead
+        // of "no covers found".
+        var appleFailure: Error?
+        do {
+            let term = [artist, album].filter { !$0.isEmpty }.joined(separator: " ")
+            let apple = try await searchAppleMusic(term)
+            if !apple.isEmpty {
+                Log.artwork.info("search: Apple Music returned \(apple.count) result(s)")
+                return apple
+            }
+            Log.artwork.info("search: Apple Music had nothing — trying the Cover Art Archive")
+        } catch {
+            appleFailure = error
+            Log.artwork.warning("search: Apple Music failed (\(error.localizedDescription)) — trying the Cover Art Archive")
+        }
 
-        let archive = try await searchCoverArtArchive(artist: artist, album: album)
-        guard !archive.isEmpty else { throw SearchError.nothingFound }
-        return archive
+        do {
+            let archive = try await searchCoverArtArchive(artist: artist, album: album)
+            if !archive.isEmpty {
+                Log.artwork.info("search: Cover Art Archive returned \(archive.count) result(s)")
+                return archive
+            }
+        } catch {
+            Log.artwork.warning("search: Cover Art Archive failed: \(error.localizedDescription)")
+            throw appleFailure ?? error
+        }
+
+        if let appleFailure { throw appleFailure }
+        Log.artwork.info("search: nothing found in either catalogue")
+        throw SearchError.nothingFound
     }
 
     private static func searchAppleMusic(_ query: String) async throws -> [ArtworkSearchResult] {
@@ -188,7 +217,9 @@ nonisolated enum ArtworkSearch {
             }
             var keep = Set<Int>()
             for await (index, ok) in group where ok { keep.insert(index) }
-            return candidates.enumerated().filter { keep.contains($0.offset) }.map(\.element)
+            let kept = candidates.enumerated().filter { keep.contains($0.offset) }.map(\.element)
+            Log.artwork.info("search: \(candidates.count) MusicBrainz release(s), \(kept.count) with cover art")
+            return kept
         }
     }
 
@@ -217,8 +248,14 @@ nonisolated enum ArtworkSearch {
     /// Download the image behind a result, falling back to the smaller variant
     /// rather than failing outright.
     static func fetch(_ result: ArtworkSearchResult) async -> Data? {
-        if let data = try? await get(result.fullURL), !data.isEmpty { return data }
-        guard let fallback = result.fallbackURL else { return nil }
+        if let data = try? await get(result.fullURL), !data.isEmpty {
+            Log.artwork.info("downloaded cover from \(result.source) (\(data.count) bytes)")
+            return data
+        }
+        guard let fallback = result.fallbackURL else {
+            Log.artwork.warning("cover download failed and there is no smaller variant to fall back to")
+            return nil
+        }
         Log.artwork.info("full-size cover unavailable, falling back to the thumbnail")
         return try? await get(fallback)
     }

@@ -38,12 +38,23 @@ nonisolated enum EmbeddedArtwork {
 
     static func scan(album: LibraryAlbum) async -> [EmbeddedArtworkCandidate] {
         var byDigest: [String: (data: Data, titles: [String])] = [:]
+        let considered = album.tracks.prefix(maxTracksScanned)
+        if album.tracks.count > maxTracksScanned {
+            Log.artwork.warning(
+                "embedded scan: \(album.name) has \(album.tracks.count) tracks — only the first \(maxTracksScanned) are read"
+            )
+        }
+        var withArtwork = 0
 
-        for track in album.tracks.prefix(maxTracksScanned) {
+        for track in considered {
             guard let data = await artworkData(in: track.url), !data.isEmpty else { continue }
+            withArtwork += 1
             let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
             byDigest[digest, default: (data, [])].titles.append(track.title)
         }
+        Log.artwork.info(
+            "embedded scan: \(album.artist) — \(album.name): \(withArtwork) of \(considered.count) file(s) carry art, \(byDigest.count) distinct image(s)"
+        )
 
         let candidates = byDigest.map { digest, entry in
             let size = pixelSize(of: entry.data)

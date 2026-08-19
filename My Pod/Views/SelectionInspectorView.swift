@@ -20,6 +20,10 @@ struct SelectionInspectorView: View {
     /// above reloads. Nothing else about the selection moved.
     @State private var artworkGeneration = 0
     @State private var queuedFor: [String] = []
+    /// Whether the highlighted album has a cover *file*, as opposed to art
+    /// pulled out of the audio. Read during `reload` rather than in `body`,
+    /// which would mean a directory enumeration on every redraw.
+    @State private var coverFile: URL?
 
     /// One album's cover in the grid. `image` is nil once loading finished and
     /// nothing was found — distinct from "not loaded yet", which is simply an
@@ -163,6 +167,7 @@ struct SelectionInspectorView: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Button(artwork == nil ? "Add Album Art…" : "Change Album Art…") {
+                    Log.ui.info("user clicked Album Art")
                     showArtSheet = true
                 }
                 // Saving art through the sheet already queues it, so this is
@@ -171,8 +176,16 @@ struct SelectionInspectorView: View {
                 // predates the iPod's baseline, or a push that failed partway
                 // through and left some tracks blank. Neither is detectable
                 // from the file, so it has to be a thing you can ask for.
-                if artwork != nil {
+                //
+                // Gated on a cover *file*, not on `artwork`. The panel above
+                // will happily show a picture lifted out of the audio, but the
+                // push needs a path on disk that still exists when libgpod
+                // renders thumbnails at save time — so for an embedded-only
+                // album this button would report success and do nothing. Use
+                // the sheet's "In the Files" tab to write it out first.
+                if coverFile != nil {
                     Button("Send to iPod Again") {
+                        Log.ui.info("user clicked Send to iPod Again")
                         queuedFor = ArtworkSync.enqueueForNextSync(
                             albumID: album.id,
                             store: DeviceProfileStore.shared
@@ -405,6 +418,7 @@ struct SelectionInspectorView: View {
         loading = true
         defer { loading = false }
         artwork = nil
+        coverFile = highlightedAlbum.flatMap { ArtworkLocator.imageInDirectory($0.directory) }
         detail = nil
         stats = nil
         covers = []

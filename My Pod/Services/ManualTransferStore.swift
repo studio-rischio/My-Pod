@@ -8,6 +8,8 @@ nonisolated struct ManualTransferOutcome: Sendable, Equatable {
     var skipped: Int = 0
     var failed: Int = 0
     var cancelled: Bool = false
+    /// Albums whose cover art was refreshed on tracks the iPod already had.
+    var artworkUpdated: Int = 0
 }
 
 @MainActor
@@ -331,8 +333,9 @@ final class ManualTransferStore {
                         total: updates.count,
                         detail: "\(update.artist) — \(update.album)"
                     )
-                    _ = await ArtworkSync.apply(update, to: device)
+                    if await ArtworkSync.apply(update, to: device) { outcome.artworkUpdated += 1 }
                 }
+                Log.artwork.info("manual: artwork updated for \(outcome.artworkUpdated) of \(updates.count) album(s)")
             }
         }
 
