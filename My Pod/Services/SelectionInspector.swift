@@ -134,6 +134,11 @@ nonisolated enum SelectionInspector: Sendable {
     /// `maxPixel` downsamples at decode time rather than after. A grid of thirty
     /// covers held at full resolution is tens of megabytes of pixel data for
     /// something drawn 56 points wide.
+    /// Drop one album's cached cover, after something changed it on disk.
+    static func invalidateArtwork(albumDirectory: URL) async {
+        await locator.invalidate(albumDir: albumDirectory)
+    }
+
     static func artwork(albumDirectory: URL, candidate: URL, maxPixel: Int) async -> NSImage? {
         guard let url = await locator.locate(albumDir: albumDirectory, candidateAudioFile: candidate) else {
             return nil

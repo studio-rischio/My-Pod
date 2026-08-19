@@ -18,6 +18,7 @@ final class ManualTransferStore {
         case loading
         case adding(completed: Int, total: Int, detail: String)
         case removing(completed: Int, total: Int, detail: String)
+        case artwork(completed: Int, total: Int, detail: String)
         case saving
         case finished(ManualTransferOutcome)
         case failed(String)
@@ -105,7 +106,7 @@ final class ManualTransferStore {
 
     var isBusy: Bool {
         switch state {
-        case .loading, .adding, .removing, .saving: true
+        case .loading, .adding, .removing, .artwork, .saving: true
         default: false
         }
     }
@@ -196,7 +197,12 @@ final class ManualTransferStore {
     /// Unlike the mirror this never *infers* a removal. Nothing is deleted
     /// because it happens to be absent locally; only what the user explicitly
     /// marked goes.
-    func commit(to device: IPodDevice, freeBytes: UInt64) async {
+    /// `library` is only used to refresh cover art on albums the iPod already
+    /// holds — manual mode has no selection, but it does have the same problem:
+    /// artwork is attached when a track is added and never revisited, so a
+    /// cover set afterwards would never reach the device. This is the mode's
+    /// only commit point, so it's where the artwork queue drains.
+    func commit(to device: IPodDevice, freeBytes: UInt64, library: MusicLibrary) async {
         guard hasPendingChanges, !isBusy else { return }
         cancelRequested = false
 
@@ -297,10 +303,47 @@ final class ManualTransferStore {
             }
         }
 
-        // 3. One save for the whole operation.
+        // 3. Cover art for albums already on the device. Database edits only,
+        // no file copies — see `ArtworkSync`.
+        //
+        // Against the *pre-commit* track list, minus what was just removed:
+        // anything added moments ago already had its artwork attached during the
+        // add, and re-pushing it here would write the same bytes twice.
+        //
+        // Only reached when something else is being committed — `hasPendingChanges`
+        // guards this method, and refreshed artwork alone doesn't count as a
+        // pending change yet. That arrives with the button that queues it.
+        let profile = DeviceProfileStore.shared.active
+        if !cancelRequested {
+            let survivors = existing.filter { !markedForRemoval.contains($0.id) }
+            let updates = ArtworkSync.updates(
+                library: library,
+                deviceTracks: survivors,
+                queued: ArtworkSync.queued(for: profile),
+                changedSince: ArtworkSync.baseline(for: profile)
+            )
+            if !updates.isEmpty {
+                Log.artwork.info("manual: refreshing artwork for \(updates.count) album(s)")
+                for (index, update) in updates.enumerated() {
+                    if cancelRequested { break }
+                    state = .artwork(
+                        completed: index,
+                        total: updates.count,
+                        detail: "\(update.artist) — \(update.album)"
+                    )
+                    _ = await ArtworkSync.apply(update, to: device)
+                }
+            }
+        }
+
+        // 4. One save for the whole operation.
         outcome.cancelled = cancelRequested
         let saved = await saveAndFinish(device: device, outcome: outcome)
         if saved {
+            // Same rule as the sync path: the baseline only moves after a save
+            // that landed.
+            ArtworkSync.markSynced(profile)
+            ArtworkSync.clearQueue(for: profile)
             let committed = existingKeys
             queuedTracks.removeAll { committed.contains(TrackKey(library: $0)) }
             markedForRemoval.removeAll()

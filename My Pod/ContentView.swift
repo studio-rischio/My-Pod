@@ -164,7 +164,7 @@ struct ContentView: View {
         let free = controller.storage.free
         Log.ui.info("user confirmed manual changes")
         Task {
-            await manualStore.commit(to: device, freeBytes: free)
+            await manualStore.commit(to: device, freeBytes: free, library: libraryStore.library)
             // Track count and free space both moved.
             controller.refresh()
         }

@@ -44,7 +44,7 @@ struct ManualSheetView: View {
         switch store.state {
         case .idle, .loading:
             EmptyView()
-        case .adding, .removing, .saving:
+        case .adding, .removing, .artwork, .saving:
             ProgressView().controlSize(.small)
         case .finished(let outcome):
             Label(outcome.cancelled ? "Cancelled" : "Done",
@@ -67,6 +67,8 @@ struct ManualSheetView: View {
             progressView("Adding music", completed: completed, total: total, detail: detail)
         case .removing(let completed, let total, let detail):
             progressView("Removing music", completed: completed, total: total, detail: detail)
+        case .artwork(let completed, let total, let detail):
+            progressView("Updating cover art", completed: completed, total: total, detail: detail)
         case .saving:
             progressView("Saving to iPod", completed: 0, total: 0, detail: "Writing the database and artwork")
         case .finished(let outcome):
@@ -197,7 +199,7 @@ struct ManualSheetView: View {
                 Button("Apply") { onCommit() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!store.hasPendingChanges)
-            case .adding, .removing:
+            case .adding, .removing, .artwork:
                 Button("Cancel") { store.cancel() }
             case .saving:
                 // Never offer a way out mid-save: the iTunesDB is being written.

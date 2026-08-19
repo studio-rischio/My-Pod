@@ -87,6 +87,7 @@ final class SyncEngine {
             return
         }
 
+        let profile = DeviceProfileStore.shared.active
         let plan = Self.computePlan(
             libraryRoot: libraryRoot,
             library: library,
@@ -95,7 +96,9 @@ final class SyncEngine {
             iPodTracks: iPodTracks,
             devicePlaylists: devicePlaylists,
             conversion: conversionService,
-            freeBytes: freeBytes
+            freeBytes: freeBytes,
+            artworkQueued: ArtworkSync.queued(for: profile),
+            artworkSyncedAt: ArtworkSync.baseline(for: profile)
         )
 
         guard plan.fits else {
@@ -105,7 +108,7 @@ final class SyncEngine {
             return
         }
 
-        Log.sync.info("plan: +\(plan.toAddCount) -\(plan.toRemoveCount), \(plan.unchangedCount) unchanged, \(plan.pendingConversion.count) need convert")
+        Log.sync.info("plan: +\(plan.toAddCount) -\(plan.toRemoveCount), \(plan.unchangedCount) unchanged, \(plan.pendingConversion.count) need convert, \(plan.artworkUpdates.count) artwork")
         Log.playlist.info("plan: playlists +\(plan.playlists(.added).count) -\(plan.playlists(.removed).count) ~\(plan.playlists(.modified).count), \(plan.playlists(.unchanged).count) unchanged")
         state = .planned(plan)
     }
@@ -169,7 +172,9 @@ final class SyncEngine {
         iPodTracks: [TrackInfo],
         devicePlaylists: [DevicePlaylist],
         conversion: ConversionService,
-        freeBytes: UInt64 = 0
+        freeBytes: UInt64 = 0,
+        artworkQueued: Set<String> = [],
+        artworkSyncedAt: Date? = nil
     ) -> SyncPlan {
         // 1. path → LibraryTrack lookup. Keyed by `.path` to dodge URL
         // canonicalization differences between scan and persistence.
@@ -244,6 +249,17 @@ final class SyncEngine {
             postSyncKeys: plannedKeys
         )
 
+        // 8. Cover art that changed after this device last received it.
+        // Restricted to `iPodTracks` — an album in `toAdd` gets its artwork
+        // attached during the add, and re-pushing it afterwards would be a
+        // second write of the same bytes.
+        let artworkUpdates = ArtworkSync.updates(
+            library: library,
+            deviceTracks: iPodTracks,
+            queued: artworkQueued,
+            changedSince: artworkSyncedAt
+        )
+
         return SyncPlan(
             toAdd: toAdd,
             toRemove: toRemove,
@@ -253,7 +269,8 @@ final class SyncEngine {
             removedBytes: removedBytes,
             freeBytesBefore: freeBytes,
             playlistCount: playlists.count,
-            playlistChanges: playlistChanges
+            playlistChanges: playlistChanges,
+            artworkUpdates: artworkUpdates
         )
     }
 
@@ -503,7 +520,44 @@ final class SyncEngine {
             return
         }
 
-        // 4. Playlists — wipe iPod's user playlists and rewrite from M3Us.
+        // 4. Cover art for albums the iPod already holds.
+        //
+        // Nothing is copied — `setTrackArtwork` is a database edit, and libgpod
+        // renders the thumbnails during save — so this is cheap even when the
+        // whole library qualifies. It runs after the add phase because tracks in
+        // `toAdd` got their artwork attached during the add itself.
+        var artworkUpdated = 0
+        if !plan.artworkUpdates.isEmpty {
+            Log.artwork.info("phase: artwork (\(plan.artworkUpdates.count) albums)")
+            let artworkStart = Date()
+            for (i, update) in plan.artworkUpdates.enumerated() {
+                if cancelRequested { break }
+                state = .running(SyncProgress(
+                    phase: .artwork,
+                    completed: i,
+                    total: plan.artworkUpdates.count,
+                    detail: "\(update.artist) — \(update.album)",
+                    phaseStartedAt: artworkStart
+                ))
+                if await ArtworkSync.apply(update, to: device) { artworkUpdated += 1 }
+            }
+            state = .running(SyncProgress(
+                phase: .artwork,
+                completed: plan.artworkUpdates.count,
+                total: plan.artworkUpdates.count,
+                phaseStartedAt: artworkStart
+            ))
+            Log.artwork.info("phase: artwork done (\(artworkUpdated) of \(plan.artworkUpdates.count) albums)")
+        }
+
+        if cancelRequested {
+            await finishCancelled(device: device, added: added, removed: removed,
+                                  failed: addFailed + removeFailed,
+                                  convertedFailures: convertedFailures)
+            return
+        }
+
+        // 5. Playlists — wipe iPod's user playlists and rewrite from M3Us.
         let playlistOutcome = await syncPlaylists(
             playlists: playlists,
             changes: plan.playlistChanges,
@@ -518,7 +572,7 @@ final class SyncEngine {
             return
         }
 
-        // 5. Save.
+        // 6. Save.
         Log.sync.info("phase: saving (writing iTunesDB + rendering thumbnails)")
         state = .running(SyncProgress(phase: .saving, completed: 0, total: 1))
         do {
@@ -528,6 +582,13 @@ final class SyncEngine {
             state = .failed(error.localizedDescription)
             return
         }
+
+        // Baseline moves only here — after a save that landed. A run that
+        // failed or was cancelled leaves it alone, so the same artwork is still
+        // pending next time rather than being quietly written off.
+        let syncedProfile = DeviceProfileStore.shared.active
+        ArtworkSync.markSynced(syncedProfile)
+        ArtworkSync.clearQueue(for: syncedProfile)
 
         let totalOnDevice = await device.trackCount()
         Log.sync.info("sync finished: added=\(added) removed=\(removed) skipped=\(plan.unchangedCount) failed=\(addFailed + removeFailed) totalOnDevice=\(totalOnDevice) playlists +\(playlistOutcome.added)/-\(playlistOutcome.removed)/~\(playlistOutcome.updated)")
@@ -541,7 +602,8 @@ final class SyncEngine {
             cancelled: false,
             playlistsAdded: playlistOutcome.added,
             playlistsRemoved: playlistOutcome.removed,
-            playlistsUpdated: playlistOutcome.updated
+            playlistsUpdated: playlistOutcome.updated,
+            artworkUpdated: artworkUpdated
         ))
     }
 

@@ -15,6 +15,11 @@ struct SelectionInspectorView: View {
     @State private var covers: [AlbumCover] = []
     @State private var extraAlbums = 0
     @State private var loading = false
+    @State private var showArtSheet = false
+    /// Bumped after cover art is written, so `reloadKey` changes and the image
+    /// above reloads. Nothing else about the selection moved.
+    @State private var artworkGeneration = 0
+    @State private var queuedFor: [String] = []
 
     /// One album's cover in the grid. `image` is nil once loading finished and
     /// nothing was found — distinct from "not loaded yet", which is simply an
@@ -40,7 +45,7 @@ struct SelectionInspectorView: View {
         // The ceiling is in here because every figure below depends on it —
         // what converts, what format it lands in, and how big it will be. A
         // different iPod being plugged in changes all three.
-        return "\(rows)#\(store.library.scannedAt.timeIntervalSince1970)#\(store.deviceSnapshot?.bytesByTrackKey.count ?? -1)#\(store.ceiling.rawValue)"
+        return "\(rows)#\(store.library.scannedAt.timeIntervalSince1970)#\(store.deviceSnapshot?.bytesByTrackKey.count ?? -1)#\(store.ceiling.rawValue)#\(artworkGeneration)"
     }
 
     var body: some View {
@@ -82,6 +87,10 @@ struct SelectionInspectorView: View {
                     .padding(.vertical, 2)
             } else if showsArtworkSlot {
                 noArtwork
+            }
+
+            if let album = highlightedAlbum {
+                artworkActions(album)
             }
 
             if !covers.isEmpty { coverGrid }
@@ -128,10 +137,78 @@ struct SelectionInspectorView: View {
         }
     }
 
+    /// A question mark rather than a picture symbol: this is a gap to fill, and
+    /// the button below it is the way to fill it.
+    /// The album the artwork controls act on.
+    ///
+    /// A highlighted track resolves to its album, because "this track has no
+    /// cover" is never true on its own — artwork is a property of the folder,
+    /// and the user clicking a track still means that album.
+    private var highlightedAlbum: LibraryAlbum? {
+        guard items.count == 1 else { return nil }
+        switch items[0] {
+        case .album(let album):
+            return album
+        case .track(let track):
+            return store.library.artists
+                .first { $0.name == track.artist }?
+                .albums.first { $0.name == track.album }
+        case .artist:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private func artworkActions(_ album: LibraryAlbum) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Button(artwork == nil ? "Add Album Art…" : "Change Album Art…") {
+                    showArtSheet = true
+                }
+                // Saving art through the sheet already queues it, so this is
+                // not "apply what I just did" — it's the case where nothing
+                // changed and the *device* is the thing that's wrong: art that
+                // predates the iPod's baseline, or a push that failed partway
+                // through and left some tracks blank. Neither is detectable
+                // from the file, so it has to be a thing you can ask for.
+                if artwork != nil {
+                    Button("Send to iPod Again") {
+                        queuedFor = ArtworkSync.enqueueForNextSync(
+                            albumID: album.id,
+                            store: DeviceProfileStore.shared
+                        )
+                    }
+                    .help("Use when the cover is right here but missing or wrong on the iPod. Art you save through Album Art is already sent automatically.")
+                }
+            }
+            .controlSize(.small)
+
+            if !queuedFor.isEmpty {
+                Text("Queued for \(queuedFor.joined(separator: ", ")) — sent at the next sync.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.bottom, 2)
+        .onChange(of: album.id) { _, _ in queuedFor = [] }
+        .sheet(isPresented: $showArtSheet) {
+            AlbumArtSheet(album: album) { _ in
+                Task {
+                    // The locator caches per album folder, so without this the
+                    // panel keeps showing the image the folder had before.
+                    await SelectionInspector.invalidateArtwork(albumDirectory: album.directory)
+                    artworkGeneration += 1
+                }
+            }
+        }
+    }
+
     private var noArtwork: some View {
         HStack(spacing: 8) {
-            Image(systemName: "photo")
+            Image(systemName: "questionmark.square.dashed")
                 .foregroundStyle(.tertiary)
+                .imageScale(.large)
             Text("No cover art found")
                 .font(.caption)
                 .foregroundStyle(.secondary)

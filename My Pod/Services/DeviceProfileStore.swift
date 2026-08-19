@@ -82,6 +82,12 @@ final class DeviceProfileStore {
         profile.lastSeen = Date()
         devices.insert(profile, at: 0)
         active = profile
+        // Both the migration for profiles written before artwork pushing
+        // existed and the starting point for a newly-seen iPod: without a
+        // baseline every album's cover looks newer than the device, and the
+        // first sync after upgrading would re-push artwork for the whole
+        // library.
+        ArtworkSync.establishBaseline(for: profile)
         save()
     }
 
@@ -145,6 +151,7 @@ final class DeviceProfileStore {
         devices.remove(at: index)
         MusicLibraryStore.forgetSelection(for: profile)
         PlaylistStore.forgetSelection(for: profile)
+        ArtworkSync.forget(profile)
         if active.key == key { active = .defaultProfile }
         save()
         Log.device.info("profile forgotten: \"\(profile.displayName)\"")

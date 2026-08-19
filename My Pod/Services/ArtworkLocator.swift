@@ -14,6 +14,14 @@ actor ArtworkLocator {
         try? FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
     }
 
+    /// Forget one album's cached answer.
+    ///
+    /// Needed after `cover.jpg` is written: the cache holds either nil or the
+    /// path of the image the folder used before, and both are now wrong.
+    func invalidate(albumDir: URL) {
+        cache[albumDir.standardizedFileURL.path] = nil
+    }
+
     func locate(albumDir: URL, candidateAudioFile: URL) async -> URL? {
         let key = albumDir.standardizedFileURL.path
         if let cached = cache[key] { return cached }
@@ -28,6 +36,18 @@ actor ArtworkLocator {
     }
 
     private nonisolated func findImageInDir(_ dir: URL) -> URL? {
+        Self.imageInDirectory(dir)
+    }
+
+    /// The image file a sync would attach for this album folder, or nil if it
+    /// holds none.
+    ///
+    /// Static and synchronous so callers that only need the *file* — chiefly
+    /// `ArtworkSync`, deciding whether a cover has changed since a device last
+    /// received it — share this priority order instead of keeping a second copy
+    /// of it that can drift. The embedded-art fallback deliberately isn't here:
+    /// it has no stable path to compare dates against.
+    nonisolated static func imageInDirectory(_ dir: URL) -> URL? {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(atPath: dir.path) else { return nil }
         let candidates = ["cover", "folder", "front", "albumart", "albumartsmall", "album"]

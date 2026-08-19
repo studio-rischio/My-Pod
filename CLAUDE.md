@@ -331,6 +331,14 @@ Raising the ceiling raises a limit; it cannot put back what was never there.
   hardware handles, and probing it would dominate scan cost). A nil probe means "leave it alone", so
   unreadable or DRM'd files keep their old behaviour. Widening these rules does **not** need a
   `cacheVersion` bump — encoder settings are unchanged, so existing cached `.m4a` files stay valid.
+- **`cover.jpg` is the only thing the app writes into the user's music library** besides the hidden
+  `.mypod` conversion cache, and `CoverArt` is the only thing that writes it. It goes in squared —
+  crop or fit, the user's choice, never left non-square — at up to 1000px, JPEG q0.85, with source
+  metadata dropped so a phone photo's location tags don't ride along. 1000 is far above what the
+  device needs (140×140 on iPod Photo, 100×100 on nano; libgpod renders its own thumbnails) and is
+  for the user's library rather than the iPod. ImageIO throughout, never `NSImage`, which ignores
+  EXIF orientation and rescales silently. Writing the file is enough to reach the device: it outranks
+  every other name `ArtworkLocator` looks for, so no sync-path change was needed.
 - **Transcoded files carry no tags.** afconvert output has no metadata; title/artist/album/artwork
   are written into the iPod database instead. That is intentional — do not "fix" it by embedding
   tags, and expect cached `.m4a` files to look blank in Finder/Music.app.
@@ -338,6 +346,19 @@ Raising the ceiling raises a limit; it cannot put back what was never there.
   `itdb_track_add`, matching the known-working CLI flow. libgpod renders the thumbnail bytes lazily
   during `itdb_write`, so the source image file must still exist at save time (hence the sync
   artwork scratch dir living in Caches for the duration of a run).
+- **Artwork for tracks the iPod already has is a separate phase, and its baseline is load-bearing.**
+  `SyncEngine.plan` treats an existing track as `unchanged` and never revisits it, and artwork is
+  attached only during the add — so a cover acquired after an album synced would never reach the
+  device. `ArtworkSync` closes that: each profile stores `artworkSyncedAt`, and an album whose cover
+  file is newer than it (or that was queued by hand) gets `ipod_set_track_artwork` on every one of
+  its tracks in the `artwork` phase. Saving through `AlbumArtSheet` queues explicitly as well as
+  bumping the date, and that redundancy is deliberate: the baseline is stamped on first connect, so an
+  iPod first seen *after* the save would have a baseline newer than the file and miss it forever.
+  Two rules keep it from misfiring. An **unset** baseline means
+  push *nothing*, not everything — `.distantPast` would re-push artwork for the whole library on the
+  first sync after upgrading; `DeviceProfileStore.deviceChanged` sets it on every connect, which is
+  both the migration and the seed for a new iPod. And the baseline moves **only after a save that
+  landed**, so a cancelled or failed run leaves the same artwork pending rather than writing it off.
 - **`track->tracklen` must be non-zero** or the iPod silently skips the track — that's why
   `AudioMetadataReader` runs per track during the add phase.
 - **Cancel semantics**: cancelling finishes the in-flight track, then saves. Never leave a path that
@@ -382,5 +403,15 @@ matter. It also gets no README or CLAUDE.md of its own.
   auto-select can't re-check something the user deliberately unchecked, and unchecked means *absent
   from the iPod* — an unchecked playlist that's on the device gets removed by the next sync, exactly
   as an unchecked track does.
+- **`ArtworkSearch` is the only network access in the app** (`BugReporter` handing a URL to
+  `NSWorkspace` aside), and it must stay that way: it runs on an explicit Search press and never at
+  launch, during a scan, or during a sync. That rule is stated in the sheet, the README and
+  `docs/index.html`, so relaxing it silently would make all three untrue. Artist and album stay
+  separate down the whole call because the two catalogues want opposite things — Apple's endpoint
+  takes one free-text term, while MusicBrainz needs `artist:"…" AND release:"…"`; a free-text
+  MusicBrainz query returns releases *titled* "Boards of Canada" by other artists where the fielded
+  one returns the album at score 100. Cover Art Archive candidates are probed with a HEAD before
+  being offered, because nothing in the MusicBrainz response says whether art exists and most
+  releases have none — measured at two dead tiles per live one.
 - Library layout is Plex-style `Root/Artist/Album/Track`; track number and title are parsed from the
   filename by `LibraryScanner.parseFilename`, which mirrors the C-side `parse_track_filename`.

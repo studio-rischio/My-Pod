@@ -71,6 +71,11 @@ struct SyncPlan: Sendable, Equatable {
     /// removed → modified → unchanged.
     var playlistChanges: [PlaylistChange] = []
 
+    /// Albums already on the iPod whose cover art on disk is newer than what the
+    /// device holds, or that were queued by hand. Unrelated to `toAdd` — those
+    /// get their artwork attached during the add itself.
+    var artworkUpdates: [ArtworkUpdate] = []
+
     var toAddCount: Int { toAdd.count }
     var toRemoveCount: Int { toRemove.count }
 
@@ -84,14 +89,16 @@ struct SyncPlan: Sendable, Equatable {
 
     var hasWork: Bool {
         !toAdd.isEmpty || !toRemove.isEmpty || !pendingConversion.isEmpty
-            || !changedPlaylists.isEmpty
+            || !changedPlaylists.isEmpty || !artworkUpdates.isEmpty
     }
 }
 
 struct SyncProgress: Sendable, Equatable {
     /// Declared in execution order — `SyncPhaseWeights` walks the cases in
     /// order to work out how much of the run is already behind us.
-    enum Phase: String, Sendable, CaseIterable { case converting, removing, adding, playlists, saving }
+    enum Phase: String, Sendable, CaseIterable {
+        case converting, removing, adding, artwork, playlists, saving
+    }
     var phase: Phase
     var completed: Int
     var total: Int
@@ -103,9 +110,9 @@ struct SyncProgress: Sendable, Equatable {
     var phaseStartedAt: Date?
 }
 
-/// Collapses the five sync phases into a single 0–1 fraction for the Dock bar.
+/// Collapses the sync phases into a single 0–1 fraction for the Dock bar.
 ///
-/// A per-phase bar would rewind to zero five times over one sync, which reads
+/// A per-phase bar would rewind to zero once per phase over one sync, which reads
 /// as broken at dock-icon size. Phases are weighted by how long they actually
 /// take: transcoding a track dwarfs copying one, which dwarfs writing a
 /// playlist entry. Weights scale with each phase's item count and are
@@ -118,6 +125,7 @@ struct SyncPhaseWeights: Sendable, Equatable {
         .converting: 6.0,    // afconvert run — the dominant cost
         .removing:   0.2,    // database edit, no file copy
         .adding:     1.0,    // copy one file to the iPod
+        .artwork:    0.2,    // database edit; the thumbnails render during save
         .playlists:  0.5,    // per playlist, not per entry
         // `saving` is deliberately absent — it's flat, see `savingCost`.
     ]
@@ -134,6 +142,7 @@ struct SyncPhaseWeights: Sendable, Equatable {
             .converting: Double(plan.pendingConversion.count),
             .removing:   Double(plan.toRemoveCount),
             .adding:     Double(plan.toAddCount),
+            .artwork:    Double(plan.artworkUpdates.count),
             .playlists:  Double(plan.playlistCount),
         ]
         var w = counts.reduce(into: [SyncProgress.Phase: Double]()) { acc, entry in
@@ -178,6 +187,8 @@ struct SyncOutcome: Sendable, Equatable {
     var playlistsRemoved: Int = 0
     /// Playlists that survived but whose contents changed.
     var playlistsUpdated: Int = 0
+    /// Albums whose cover art was refreshed on tracks the iPod already had.
+    var artworkUpdated: Int = 0
 }
 
 enum SyncState: Equatable, Sendable {

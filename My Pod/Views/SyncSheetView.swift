@@ -83,6 +83,11 @@ struct SyncSheetView: View {
                 summaryRow("Remove", count: plan.toRemoveCount, bytes: plan.removedBytes, color: .red)
                 summaryRow("Unchanged", count: plan.unchangedCount, color: .secondary)
                 summaryRow("Convert (→\(engine.conversionService.ceiling.codec == .alac ? "ALAC" : "AAC"))", count: plan.pendingConversion.count, color: .orange)
+                // Normally zero, so it appears only when there's something to
+                // say rather than sitting at 0 above every sync.
+                if !plan.artworkUpdates.isEmpty {
+                    summaryRow("Update cover art", count: plan.artworkUpdates.count, color: .orange)
+                }
 
                 playlistSection(plan)
 
@@ -236,6 +241,7 @@ struct SyncSheetView: View {
                 && (progress.phase == .converting
                     || progress.phase == .removing
                     || progress.phase == .adding
+                    || progress.phase == .artwork
                     || progress.phase == .playlists)
 
             if showsBar {
@@ -315,6 +321,9 @@ struct SyncSheetView: View {
             }
             if outcome.convertedFailures > 0 {
                 summaryRow("Conversion failures", count: outcome.convertedFailures, color: .orange)
+            }
+            if outcome.artworkUpdated > 0 {
+                summaryRow("Cover art updated", count: outcome.artworkUpdated, color: .orange)
             }
             if outcome.playlistsAdded > 0 {
                 summaryRow("Playlists added", count: outcome.playlistsAdded, color: .accentColor)
@@ -401,6 +410,7 @@ struct SyncSheetView: View {
         case .converting: "Converting tracks…"
         case .removing: "Removing tracks…"
         case .adding: "Copying tracks to iPod…"
+        case .artwork: "Updating cover art…"
         case .playlists: "Writing playlists…"
         case .saving: "Saving database…"
         }
