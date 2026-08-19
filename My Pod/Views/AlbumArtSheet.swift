@@ -502,39 +502,70 @@ struct AlbumArtSheet: View {
     private func accept(_ provider: NSItemProvider) {
         error = nil
         loading = true
-        // A file URL is offered by Finder and by some browsers; taking it first
-        // means reading the original bytes instead of a screen-resolution bitmap.
-        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        // What a browser actually offers varies by browser and by page, and it
+        // is the first thing worth knowing when a drop fails.
+        Log.artwork.debug("drop offers: \(provider.registeredTypeIdentifiers.joined(separator: ", "))")
+
+        Task {
+            // Strategies in order of fidelity, each *falling through* to the
+            // next. They used to be exclusive: whichever branch matched first
+            // committed, and if it then produced nothing the drop failed even
+            // though another representation would have worked. A browser will
+            // happily advertise a type it can't deliver.
+            if let identifier = Self.imageTypeIdentifier(in: provider),
+               let data = await Self.data(from: provider, identifier: identifier),
+               let image = CoverArt.load(data: data) {
+                finish(image, label: "Dropped image")
+                return
+            }
+
+            let dropped = await Self.firstURL(in: provider)
+
+            if let url = dropped, url.isFileURL, let image = CoverArt.load(contentsOf: url) {
+                finish(image, label: url.lastPathComponent)
+                return
+            }
+            // A remote URL — an <img> dragged out of a page. Fetching it is a
+            // network request, made only because the user just dragged it here;
+            // nothing fetches on its own.
+            if let url = dropped, !url.isFileURL {
+                await loadRemote(url)
+                return
+            }
+            finish(nil, label: "")
+        }
+    }
+
+    /// A *concrete* registered identifier that is an image — `public.jpeg`,
+    /// not `public.image`.
+    ///
+    /// This is the bug that made browser drags fail. `hasItemConformingToType`
+    /// answers about conformance, so it says yes to `public.image` for a
+    /// provider carrying a JPEG; but `loadDataRepresentation` wants a type the
+    /// provider actually registered, and hands back nil for the abstract
+    /// parent. Asking what it has, rather than telling it what to produce, works
+    /// for both.
+    private static func imageTypeIdentifier(in provider: NSItemProvider) -> String? {
+        provider.registeredTypeIdentifiers.first { identifier in
+            UTType(identifier)?.conforms(to: .image) == true
+        }
+    }
+
+    private static func data(from provider: NSItemProvider, identifier: String) async -> Data? {
+        await withCheckedContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
+                continuation.resume(returning: data)
+            }
+        }
+    }
+
+    private static func firstURL(in provider: NSItemProvider) async -> URL? {
+        guard provider.canLoadObject(ofClass: URL.self) else { return nil }
+        return await withCheckedContinuation { continuation in
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                Task { @MainActor in
-                    guard let url, url.isFileURL else { finish(nil, label: ""); return }
-                    loadFile(url)
-                }
+                continuation.resume(returning: url)
             }
-            return
         }
-        for type in [UTType.png, .tiff, .image] where provider.hasItemConformingToTypeIdentifier(type.identifier) {
-            provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
-                Task { @MainActor in
-                    guard let data else { finish(nil, label: ""); return }
-                    finish(CoverArt.load(data: data), label: "Dropped image")
-                }
-            }
-            return
-        }
-        // A remote URL — an <img> dragged out of a page. Fetching it is a
-        // network request, made only because the user just dragged it here;
-        // nothing fetches on its own.
-        if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                Task { @MainActor in
-                    guard let url else { finish(nil, label: ""); return }
-                    await loadRemote(url)
-                }
-            }
-            return
-        }
-        finish(nil, label: "")
     }
 
     private func loadFile(_ url: URL) {
@@ -544,8 +575,27 @@ struct AlbumArtSheet: View {
 
     private func loadRemote(_ url: URL) async {
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            finish(CoverArt.load(data: data), label: url.lastPathComponent)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let image = CoverArt.load(data: data) {
+                finish(image, label: url.lastPathComponent)
+                return
+            }
+            loading = false
+            let mime = (response as? HTTPURLResponse)?
+                .value(forHTTPHeaderField: "Content-Type")?
+                .lowercased() ?? ""
+            // Worth telling apart, because the user did nothing wrong and the
+            // fix is a different action. Plenty of sites — Bandcamp among them
+            // — wrap the cover in a link to the release page, so dragging the
+            // picture hands over the *page* address and what comes back is
+            // HTML. "That doesn't look like an image" is true and useless.
+            if mime.contains("html") || mime.contains("text/") {
+                Log.artwork.warning("dragged item resolved to a page (\(mime)), not an image: \(url.absoluteString)")
+                self.error = "That's a link to a web page, not to an image — some sites wrap the cover in a link to the release. Open the picture on its own first, or save it and drop the file."
+            } else {
+                Log.artwork.warning("downloaded \(data.count) bytes from \(url.absoluteString) (\(mime)) but couldn't decode an image")
+                self.error = "That downloaded, but isn't an image format My Pod can read."
+            }
         } catch {
             Log.artwork.warning("dragged image couldn't be downloaded: \(error.localizedDescription)")
             self.error = "That image couldn't be downloaded: \(error.localizedDescription)"
@@ -556,8 +606,8 @@ struct AlbumArtSheet: View {
     private func finish(_ image: CGImage?, label: String) {
         loading = false
         guard let image else {
-            Log.artwork.warning("dropped or chosen item couldn't be decoded as an image (\(label.isEmpty ? "unknown source" : label))")
-            error = "That doesn't look like an image My Pod can read."
+            Log.artwork.warning("nothing in the drop could be decoded as an image (\(label.isEmpty ? "no usable representation" : label))")
+            error = "Nothing in that drop was an image My Pod can read. Try saving the picture and using Choose File."
             return
         }
         Log.artwork.info("loaded candidate cover: \(label) (\(image.width)×\(image.height))")
