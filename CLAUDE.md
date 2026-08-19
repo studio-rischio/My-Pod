@@ -403,9 +403,13 @@ matter. It also gets no README or CLAUDE.md of its own.
   auto-select can't re-check something the user deliberately unchecked, and unchecked means *absent
   from the iPod* — an unchecked playlist that's on the device gets removed by the next sync, exactly
   as an unchecked track does.
-- **`ArtworkSearch` is the only network access in the app** (`BugReporter` handing a URL to
-  `NSWorkspace` aside), and it must stay that way: it runs on an explicit Search press and never at
-  launch, during a scan, or during a sync. That rule is stated in the sheet, the README and
+- **Exactly two things reach the network, and both only on an explicit press.** `ArtworkSearch` runs
+  on Search; `UpdateChecker` runs on My Pod ▸ Check for Updates… (`BugReporter` handing a URL to
+  `NSWorkspace` aside). Neither runs at launch, on a timer, during a scan, or during a sync, and the
+  promise stated in the app, the README and `docs/index.html` is *"nothing leaves your machine unless
+  you ask"* — not "only one feature uses the network", which a third caller would quietly falsify.
+  Adding an automatic update check is the specific thing that would break it: this audience keeps
+  twenty-year-old hardware alive partly to avoid software that phones home, so it stays manual. That rule is stated in the sheet, the README and
   `docs/index.html`, so relaxing it silently would make all three untrue. Artist and album stay
   separate down the whole call because the two catalogues want opposite things — Apple's endpoint
   takes one free-text term, while MusicBrainz needs `artist:"…" AND release:"…"`; a free-text

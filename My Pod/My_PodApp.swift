@@ -47,6 +47,12 @@ struct My_PodApp: App {
                 Button("About \(appName)") {
                     openWindow(id: "about")
                 }
+                // The app menu, not Help. That's where macOS puts Check for
+                // Updates — directly under About — and it's where people look
+                // for it, whatever the Help menu might suggest.
+                Button("Check for Updates…") {
+                    UpdateChecker.shared.presentAndCheck()
+                }
             }
 
             // The stock Help item opens a help book this app doesn't ship, so

@@ -23,6 +23,10 @@ struct ContentView: View {
     // the observation.
     private var profileStore: DeviceProfileStore { .shared }
 
+    // Driven by the app-menu command, which has no view of its own to present
+    // from — `Commands` is built alongside the window, not inside it.
+    @Bindable private var updateChecker = UpdateChecker.shared
+
     var body: some View {
         VStack(spacing: 0) {
             HeaderView(
@@ -99,6 +103,9 @@ struct ContentView: View {
         // the iPod should look and feel identical whichever mode produced it.
         .sheet(isPresented: $showManualSheet) {
             ManualSheetView(store: manualStore, onCommit: commitManualAdd)
+        }
+        .sheet(isPresented: $updateChecker.isPresenting) {
+            UpdateSheet(checker: updateChecker)
         }
     }
 
