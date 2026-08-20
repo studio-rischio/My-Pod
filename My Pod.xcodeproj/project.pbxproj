@@ -12,6 +12,11 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		C0DE0A11000000000C0DE001 /* ipod-api */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "core/ipod-api";
+			sourceTree = "<group>";
+		};
 		ED80D2A82FAD2EB700CA473E /* My Pod */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "My Pod";
@@ -73,6 +78,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				ED80D2A82FAD2EB700CA473E /* My Pod */,
+				C0DE0A11000000000C0DE001 /* ipod-api */,
 			);
 			name = "My Pod";
 			packageProductDependencies = (
@@ -140,7 +146,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/Vendor/libgpod/src/.libs/libgpod.a",
+				"$(SRCROOT)/core/libgpod/src/.libs/libgpod.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;

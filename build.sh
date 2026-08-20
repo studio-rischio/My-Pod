@@ -40,7 +40,7 @@ else
     DERIVED="./build-$ARCH"
 fi
 APP_PATH="$DERIVED/Build/Products/$CONFIG/My Pod.app"
-LIBGPOD_A="Vendor/libgpod/src/.libs/libgpod.a"
+LIBGPOD_A="core/libgpod/src/.libs/libgpod.a"
 INTEL_PREFIX="$PWD/Vendor/intel-deps"
 
 GREEN='\033[0;32m'

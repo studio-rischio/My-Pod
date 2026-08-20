@@ -12,7 +12,7 @@ ENABLE_HARDENED_RUNTIME = NO
 ENABLE_USER_SELECTED_FILES = readwrite
 
 // The "Build libgpod" run-script phase drives an autotools build that reads and
-// writes several hundred files throughout Vendor/libgpod. Script sandboxing
+// writes several hundred files throughout core/libgpod. Script sandboxing
 // only permits paths declared as phase inputs/outputs, and that file set can't
 // be enumerated ahead of time, so the phase can't run sandboxed at all.
 ENABLE_USER_SCRIPT_SANDBOXING = NO
@@ -37,18 +37,18 @@ STRIP_STYLE[config=Release] = debugging
 CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
 
 // Bridging header — exposes ipod-api.h to Swift.
-SWIFT_OBJC_BRIDGING_HEADER = $(SRCROOT)/My Pod/IPodKit/My_Pod-Bridging-Header.h
+SWIFT_OBJC_BRIDGING_HEADER = $(SRCROOT)/My Pod/My_Pod-Bridging-Header.h
 
 // Headers needed by ipod-api.c (libgpod + GLib + gdk-pixbuf umbrella).
-HEADER_SEARCH_PATHS = $(inherited) "$(SRCROOT)/My Pod/IPodKit" "$(SRCROOT)/Vendor/libgpod/src" "$(BREW_PREFIX)/opt/glib/include/glib-2.0" "$(BREW_PREFIX)/opt/glib/lib/glib-2.0/include" "$(BREW_PREFIX)/opt/gettext/include" "$(BREW_PREFIX)/include"
+HEADER_SEARCH_PATHS = $(inherited) "$(SRCROOT)/core/ipod-api" "$(SRCROOT)/core/libgpod/src" "$(BREW_PREFIX)/opt/glib/include/glib-2.0" "$(BREW_PREFIX)/opt/glib/lib/glib-2.0/include" "$(BREW_PREFIX)/opt/gettext/include" "$(BREW_PREFIX)/include"
 
 // Where to find the Homebrew dylibs at link time.
 LIBRARY_SEARCH_PATHS = $(inherited) "$(BREW_PREFIX)/opt/glib/lib" "$(BREW_PREFIX)/opt/gettext/lib" "$(BREW_PREFIX)/lib"
 
 // Libraries: libgpod is statically linked from the vendored source in
-// Vendor/libgpod, built by Scripts/build-libgpod.sh.
+// core/libgpod, built by Scripts/build-libgpod.sh.
 // Everything else is dynamically linked from Homebrew or the macOS SDK.
-OTHER_LDFLAGS = $(inherited) "$(SRCROOT)/Vendor/libgpod/src/.libs/libgpod.a" -lglib-2.0 -lgobject-2.0 -lgmodule-2.0 -lintl -lplist-2.0 -lxml2 -lgdk_pixbuf-2.0 -lsqlite3 -lz
+OTHER_LDFLAGS = $(inherited) "$(SRCROOT)/core/libgpod/src/.libs/libgpod.a" -lglib-2.0 -lgobject-2.0 -lgmodule-2.0 -lintl -lplist-2.0 -lxml2 -lgdk_pixbuf-2.0 -lsqlite3 -lz
 
 // libgpod was built without ARC concerns; suppress incidental warnings from it.
 GCC_WARN_UNUSED_VARIABLE = NO

@@ -2,8 +2,8 @@
 #
 # Build the vendored libgpod into a static library.
 #
-# My Pod links Vendor/libgpod/src/.libs/libgpod.a and includes headers from
-# Vendor/libgpod/src. This script is the only thing that produces them — it's
+# My Pod links core/libgpod/src/.libs/libgpod.a and includes headers from
+# core/libgpod/src. This script is the only thing that produces them — it's
 # invoked from the top-level build.sh and from the app target's "Build libgpod"
 # run-script phase, both of which skip it when the .a is already present.
 #
@@ -41,7 +41,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 ROOT="$PWD"
-LIBGPOD_DIR="Vendor/libgpod"
+LIBGPOD_DIR="core/libgpod"
 LIBGPOD_A="$LIBGPOD_DIR/src/.libs/libgpod.a"
 ARCH_CACHE="$ROOT/Vendor/libgpod-arch"
 INTEL_PREFIX="$ROOT/Vendor/intel-deps"

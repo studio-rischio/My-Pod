@@ -19,12 +19,12 @@ CONFIG=Release ./build.sh build      # Debug is the default
 ```
 
 The first run compiles libgpod (a few minutes). Subsequent runs skip it — `Scripts/build-libgpod.sh`
-short-circuits when `Vendor/libgpod/src/.libs/libgpod.a` exists. Force a libgpod rebuild with
+short-circuits when `core/libgpod/src/.libs/libgpod.a` exists. Force a libgpod rebuild with
 `./Scripts/build-libgpod.sh --force`. Xcode builds work too; a "Build libgpod" run-script phase
 covers the same ground.
 
 Prerequisites: `brew install glib pkg-config`, plus `brew install autoconf automake libtool gtk-doc
-intltool` only when `Vendor/libgpod/configure` still needs generating.
+intltool` only when `core/libgpod/configure` still needs generating.
 
 ### Cutting a release
 
@@ -150,9 +150,9 @@ git archive HEAD | tar -x -C "$DEST" && cd "$DEST" && ./build.sh build
 
 Four layers, bottom-up:
 
-1. **`Vendor/libgpod/`** — upstream C library that reads/writes the iTunesDB format. Statically
+1. **`core/libgpod/`** — upstream C library that reads/writes the iTunesDB format. Statically
    linked.
-2. **`My Pod/IPodKit/ipod-api.{c,h}`** — the only place GLib types appear. Exposes an opaque
+2. **`core/ipod-api/ipod-api.{c,h}`** — the only place GLib types appear. Exposes an opaque
    `IPodDB*` plus plain-C structs so nothing above it sees `GList`/`GHashTable`/`GError`. Reached
    from Swift through `My_Pod-Bridging-Header.h`.
 3. **`My Pod/Models/IPodDevice.swift`** — a Swift `actor` wrapping `IPodDB*`, one method per C call,
@@ -380,11 +380,11 @@ heuristic, which adds `-Werror` flags a 2007 codebase can't satisfy under modern
 
 ## Licensing boundary
 
-`My Pod/IPodKit/ipod-api.c` is MIT and must stay that way: it calls libgpod's public API and includes
-`itdb.h`, but contains **no libgpod code**. Don't copy implementation out of `Vendor/libgpod/` into
+`core/ipod-api/ipod-api.c` is MIT and must stay that way: it calls libgpod's public API and includes
+`itdb.h`, but contains **no libgpod code**. Don't copy implementation out of `core/libgpod/` into
 it.
 
-Avoid sweeping edits inside `Vendor/libgpod/` — it's an upstream fork and diffs against upstream
+Avoid sweeping edits inside `core/libgpod/` — it's an upstream fork and diffs against upstream
 matter. It also gets no README or CLAUDE.md of its own.
 
 ## Conventions

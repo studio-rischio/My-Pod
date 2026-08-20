@@ -38,7 +38,7 @@ struct AboutView: View {
             Rectangle().fill(Color(NSColor.separatorColor)).frame(width: 220, height: 0.5)
 
             // Bundled-tech credit. libgpod (modified fork) is vendored under
-            // Vendor/libgpod and statically linked into the app.
+            // core/libgpod and statically linked into the app.
             VStack(spacing: 3) {
                 creditLine(
                     "libgpod",

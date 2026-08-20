@@ -135,19 +135,20 @@ This works from an Apple silicon Mac. Homebrew there installs arm64-only librari
 ## Project layout
 
 ```
-My Pod/          App source
-  IPodKit/       C shim exposing libgpod to Swift (ipod-api.c/.h + bridging header)
+core/            Platform-neutral C, shared with future ports
+  ipod-api/      C shim exposing libgpod (ipod-api.c/.h)
+  libgpod/       Vendored libgpod (modified fork), statically linked
+My Pod/          macOS app source (Swift)
   Models/        Value types — library, tracks, sync plan, device
   Services/      Scanning, conversion, sync engine, device control
   Views/         SwiftUI interface
-Vendor/libgpod/  Vendored libgpod (modified fork), statically linked
 Scripts/         build-libgpod.sh, fetch-intel-deps.sh, bundle-app.sh
 Config/          MyPod.xcconfig — search paths, link flags, sandbox settings
 docs/            Project page (GitHub Pages) and its screenshots
 icon/            App icon design source
 ```
 
-Swift talks to libgpod through `IPodKit/ipod-api.c`, a small C wrapper that keeps GLib's memory semantics (`GList`, `GHashTable`, `GError`) out of Swift. Everything above it is ordinary Swift.
+Swift talks to libgpod through `core/ipod-api/ipod-api.c`, a small C wrapper that keeps GLib's memory semantics (`GList`, `GHashTable`, `GError`) out of Swift. Everything above it is ordinary Swift.
 
 ## How it works
 
@@ -186,7 +187,7 @@ The goal is that a sync always works by default, not that it extracts every last
 
 ## Acknowledgements
 
-Built on [libgpod](https://gitlab.gnome.org/Archive/libgpod), which does the real work of reading and writing the iTunesDB format. The copy in `Vendor/libgpod` is a modified fork.
+Built on [libgpod](https://gitlab.gnome.org/Archive/libgpod), which does the real work of reading and writing the iTunesDB format. The copy in `core/libgpod` is a modified fork.
 
 ## How this was built
 
@@ -203,9 +204,9 @@ The split follows the directory layout:
 | Path | License |
 |---|---|
 | `My Pod/`, `Scripts/`, `Config/`, root build scripts | [MIT](LICENSE) |
-| `Vendor/libgpod/` | LGPL 2.1 or later |
+| `core/libgpod/` | LGPL 2.1 or later |
 
-`My Pod/IPodKit/ipod-api.c` is MIT despite linking libgpod. It contains no libgpod code — it calls the public API and includes `itdb.h`, which LGPL 2.1 §5 defines as a *"work that uses the Library"* rather than a derivative work.
+`core/ipod-api/ipod-api.c` is MIT despite linking libgpod. It contains no libgpod code — it calls the public API and includes `itdb.h`, which LGPL 2.1 §5 defines as a *"work that uses the Library"* rather than a derivative work.
 
 Because libgpod is linked **statically**, LGPL 2.1 §6 requires that anyone distributing a compiled binary also provide the source or object files needed to relink against a modified libgpod. Distributing this repository's source satisfies that; shipping a prebuilt `.app` or disk image on its own does not.
 

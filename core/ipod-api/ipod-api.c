@@ -9,7 +9,7 @@
  * MIT rather than LGPL despite linking libgpod: this file contains no libgpod
  * code, it only calls the public API and includes itdb.h. LGPL 2.1 section 5
  * calls that a "work that uses the Library" and states it is not a derivative
- * work. libgpod itself (Vendor/libgpod) remains LGPL-2.1-or-later, and linking
+ * work. libgpod itself (core/libgpod) remains LGPL-2.1-or-later, and linking
  * it statically carries the section 6 relink obligation described in LICENSE.
  */
 

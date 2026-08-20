@@ -25,9 +25,9 @@ SOFTWARE.
 This license covers the contents of `My Pod/`, `Scripts/`, `Config/`, and the
 build scripts at the repository root.
 
-It does NOT cover `Vendor/libgpod/`, which is a modified fork of libgpod,
+It does NOT cover `core/libgpod/`, which is a modified fork of libgpod,
 licensed under the GNU Lesser General Public License, version 2.1 or later.
-See `Vendor/libgpod/COPYING` and the per-file headers in `Vendor/libgpod/src/`.
+See `core/libgpod/COPYING` and the per-file headers in `core/libgpod/src/`.
 
 libgpod is statically linked into the application. Under LGPL 2.1 section 6,
 anyone distributing a compiled binary of this application must also provide the

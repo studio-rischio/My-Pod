@@ -62,7 +62,7 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 
 # Anchored to the repo root on purpose. Unanchored, these match at any depth —
-# `examples/` was silently excluding Vendor/libgpod/bindings/python/examples/,
+# `examples/` was silently excluding core/libgpod/bindings/python/examples/,
 # whose Makefile.am is named in libgpod's configure.ac, so a fresh clone failed
 # to configure.
 /examples/
@@ -74,43 +74,43 @@ fastlane/test_output
 .DS_Store
 *~lock~*
 
-# Superseded by Vendor/libgpod. ipod-tools is its own repo
+# Superseded by core/libgpod. ipod-tools is its own repo
 # (github.com/jbartolozzi/ipod-tools) and nothing here references it any more;
 # ignored so a stray `git add -A` can't commit it as an embedded repo.
 /ipod-tools/
 
 # Vendored libgpod — the source is committed, the autotools build output is not.
 # Regenerate with ./Scripts/build-libgpod.sh (clean with `… clean`).
-Vendor/libgpod/**/.libs/
-Vendor/libgpod/**/.deps/
-Vendor/libgpod/**/*.o
-Vendor/libgpod/**/*.lo
-Vendor/libgpod/**/*.la
-Vendor/libgpod/**/*.a
-Vendor/libgpod/**/Makefile
-Vendor/libgpod/**/Makefile.in
-Vendor/libgpod/**/stamp-h1
-Vendor/libgpod/aclocal.m4
-Vendor/libgpod/autom4te.cache/
-Vendor/libgpod/config.guess
-Vendor/libgpod/config.h
-Vendor/libgpod/config.h.in
-Vendor/libgpod/config.log
-Vendor/libgpod/config.status
-Vendor/libgpod/config.sub
-Vendor/libgpod/configure
-Vendor/libgpod/depcomp
-Vendor/libgpod/install-sh
-Vendor/libgpod/libtool
-Vendor/libgpod/ltmain.sh
-Vendor/libgpod/missing
-Vendor/libgpod/compile
-Vendor/libgpod/test-driver
-Vendor/libgpod/libgpod-1.0.pc
-Vendor/libgpod/po/*.gmo
-Vendor/libgpod/po/*.mo
-Vendor/libgpod/po/POTFILES
-Vendor/libgpod/po/stamp-it
+core/libgpod/**/.libs/
+core/libgpod/**/.deps/
+core/libgpod/**/*.o
+core/libgpod/**/*.lo
+core/libgpod/**/*.la
+core/libgpod/**/*.a
+core/libgpod/**/Makefile
+core/libgpod/**/Makefile.in
+core/libgpod/**/stamp-h1
+core/libgpod/aclocal.m4
+core/libgpod/autom4te.cache/
+core/libgpod/config.guess
+core/libgpod/config.h
+core/libgpod/config.h.in
+core/libgpod/config.log
+core/libgpod/config.status
+core/libgpod/config.sub
+core/libgpod/configure
+core/libgpod/depcomp
+core/libgpod/install-sh
+core/libgpod/libtool
+core/libgpod/ltmain.sh
+core/libgpod/missing
+core/libgpod/compile
+core/libgpod/test-driver
+core/libgpod/libgpod-1.0.pc
+core/libgpod/po/*.gmo
+core/libgpod/po/*.mo
+core/libgpod/po/POTFILES
+core/libgpod/po/stamp-it
 
 # Full-resolution screenshot originals. The repo ships the resized .webp
 # versions; these are kept locally so a re-encode doesn't mean re-shooting.
