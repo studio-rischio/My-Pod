@@ -359,6 +359,16 @@ Raising the ceiling raises a limit; it cannot put back what was never there.
   first sync after upgrading; `DeviceProfileStore.deviceChanged` sets it on every connect, which is
   both the migration and the seed for a new iPod. And the baseline moves **only after a save that
   landed**, so a cancelled or failed run leaves the same artwork pending rather than writing it off.
+- **Playlist membership is written by track *index*, never by track ID.** libgpod assigns track IDs
+  in `itdb_write`, not in `itdb_track_add` (`core/libgpod/src/itdb_itunesdb.c`, `track->id =
+  fexp->next_id++`), so every track added earlier in the same sync still reports id 0 when the
+  playlist phase runs — and `itdb_track_by_id(0)` returns whichever track is first with that value.
+  Using IDs collapsed an entire playlist onto one song. It shipped in 1.8 because the failure is
+  invisible on every sync *except* the one where tracks are new: a playlist whose tracks were already
+  on the device resolves perfectly, so re-syncing "fixes" it and hides the bug. `syncPlaylists`
+  therefore holds `indexByKey`, and nothing between reading that list and adding the entries may
+  alter `itdb->tracks`. It also logs an error when a playlist resolves to fewer than half as many
+  distinct tracks as entries, which is the cheap check whose absence made this expensive to find.
 - **`track->tracklen` must be non-zero** or the iPod silently skips the track — that's why
   `AudioMetadataReader` runs per track during the add phase.
 - **Cancel semantics**: cancelling finishes the in-flight track, then saves. Never leave a path that

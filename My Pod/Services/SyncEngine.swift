@@ -678,9 +678,20 @@ final class SyncEngine {
             return outcome
         }
 
+        // Keyed to a track's *position*, not its ID. libgpod assigns IDs in
+        // `itdb_write`, so every track added earlier in this same sync still
+        // reports id 0 — and looking one up by ID returns whichever track is
+        // first with that value, collapsing an entire playlist onto one song.
+        // It only ever worked for tracks already on the device before the sync,
+        // which is why it survived: the failure is invisible on every run except
+        // the first.
+        //
+        // Nothing between here and the adds below may alter `itdb->tracks`.
+        // Clearing playlists and creating them doesn't, which is what makes the
+        // index safe to hold across this loop.
         let iPodTracks = await device.tracks()
-        var idsByKey: [TrackKey: UInt32] = [:]
-        for t in iPodTracks { idsByKey[TrackKey(ipod: t)] = t.id }
+        var indexByKey: [TrackKey: Int] = [:]
+        for (index, t) in iPodTracks.enumerated() { indexByKey[TrackKey(ipod: t)] = index }
 
         for (i, playlist) in playlists.enumerated() {
             if cancelRequested { break }
@@ -696,17 +707,28 @@ final class SyncEngine {
                 let playlistID = try await device.createPlaylist(name: playlist.name)
                 var matched = 0
                 var unmatched = 0
+                var distinct: Set<Int> = []
                 for entry in playlist.entries {
                     guard let key = Self.playlistEntryKey(entry: entry) else {
                         unmatched += 1
                         continue
                     }
-                    guard let trackID = idsByKey[key] else {
+                    guard let index = indexByKey[key] else {
                         unmatched += 1
                         continue
                     }
-                    try? await device.addTrackToPlaylist(playlistID: playlistID, trackID: trackID)
+                    try? await device.addTrackToPlaylist(playlistID: playlistID, trackIndex: index)
+                    distinct.insert(index)
                     matched += 1
+                }
+                // A playlist collapsing onto a handful of tracks is not something
+                // a user builds; it's this class of bug. Cheap to check, and the
+                // absence of it is what turned the ID version into an afternoon
+                // of forensics instead of one line in the log.
+                if matched > 1, distinct.count * 2 < matched {
+                    Log.playlist.error(
+                        "playlist \"\(playlist.name)\": \(matched) entries resolved to only \(distinct.count) distinct track(s) — this is a bug, not a playlist"
+                    )
                 }
                 switch change?.kind {
                 case .added: outcome.added += 1

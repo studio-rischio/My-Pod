@@ -223,9 +223,19 @@ actor IPodDevice {
     }
 
     /// Append a track (already on the iPod) to a playlist.
-    func addTrackToPlaylist(playlistID: UInt64, trackID: UInt32) throws {
+    /// Add a track to a playlist by its position in the device's track list.
+    ///
+    /// Not by ID, deliberately. libgpod assigns track IDs during `itdb_write`,
+    /// not during `itdb_track_add`, so anything added since the last save still
+    /// reports id 0 — and `itdb_track_by_id(0)` returns whichever track is first
+    /// with that value. Every entry then lands on the same track, which is a
+    /// playlist that looks written and is silently wrong.
+    ///
+    /// The index comes from `tracks()`, which walks the same list. Nothing may
+    /// add or remove tracks in between.
+    func addTrackToPlaylist(playlistID: UInt64, trackIndex: Int) throws {
         guard let db else { throw IPodError.notOpen }
-        let result = ipod_playlist_add_track(db, playlistID, trackID)
+        let result = ipod_playlist_add_track_at_index(db, playlistID, Int32(trackIndex))
         if result.success == 0 {
             let msg = result.error.flatMap { String(cString: $0) } ?? "Unknown error"
             ipod_free_string(result.error)

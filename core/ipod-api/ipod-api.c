@@ -999,6 +999,40 @@ IPodResult ipod_playlist_add_track(IPodDB *db, uint64_t playlist_id, uint32_t tr
     return result;
 }
 
+IPodResult ipod_playlist_add_track_at_index(IPodDB *db, uint64_t playlist_id, int index)
+{
+    IPodResult result = {0, NULL};
+
+    if (!db || !db->itdb) {
+        result.error = strdup("Invalid database handle");
+        return result;
+    }
+    if (index < 0) {
+        result.error = strdup("Track index is negative");
+        return result;
+    }
+
+    Itdb_Playlist *pl = itdb_playlist_by_id(db->itdb, playlist_id);
+    if (!pl) {
+        result.error = strdup("Playlist not found");
+        return result;
+    }
+
+    /* Position, not ID, because a track added since the last save has no ID
+       yet — see the header. Same list ipod_get_track_at_index() walks. */
+    Itdb_Track *track = (Itdb_Track *)g_list_nth_data(db->itdb->tracks, (guint)index);
+    if (!track) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "No track at index %d", index);
+        result.error = strdup(buf);
+        return result;
+    }
+
+    itdb_playlist_add_track(pl, track, -1);
+    result.success = 1;
+    return result;
+}
+
 int ipod_clear_user_playlists(IPodDB *db)
 {
     if (!db || !db->itdb) return 0;

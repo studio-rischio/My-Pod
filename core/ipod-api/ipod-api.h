@@ -333,7 +333,34 @@ uint64_t ipod_create_playlist(IPodDB *db, const char *name);
  * @param track_id     Track ID
  * @return             Result with success status
  */
+/**
+ * Add a track to a playlist by track ID.
+ *
+ * WARNING: only correct for tracks whose IDs are real — that is, tracks read
+ * from the database, not tracks added since the last ipod_save(). libgpod
+ * assigns IDs in itdb_write(), so a freshly added track reports id 0 and this
+ * silently attaches whichever track is first with that value. Use
+ * ipod_playlist_add_track_at_index() during a sync.
+ */
 IPodResult ipod_playlist_add_track(IPodDB *db, uint64_t playlist_id, uint32_t track_id);
+
+/**
+ * Add a track to a playlist by its position in the database's track list.
+ *
+ * Prefer this over ipod_playlist_add_track() for tracks added during the
+ * current session. libgpod assigns track IDs in itdb_write(), not in
+ * itdb_track_add() — so every track added since the last save still reports
+ * id 0, and looking one up by ID returns whichever track happens to be first
+ * with that value. Position is valid immediately.
+ *
+ * @param db          Database handle
+ * @param playlist_id Playlist ID
+ * @param index       Zero-based index into the same list ipod_get_track_at_index()
+ *                    walks. Callers must not add or remove tracks between
+ *                    reading an index and using it.
+ * @return            Result with success status
+ */
+IPodResult ipod_playlist_add_track_at_index(IPodDB *db, uint64_t playlist_id, int index);
 
 /**
  * Remove every user-created (non-master) playlist from the database.
