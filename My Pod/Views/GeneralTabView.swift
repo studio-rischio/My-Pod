@@ -10,6 +10,7 @@ struct GeneralTabView: View {
     @State private var proposedManual = false
     @State private var strandedCount = 0
     @State private var profiles = DeviceProfileStore.shared
+    @State private var artworkResendQueued = false
 
     var body: some View {
         ScrollView {
@@ -225,6 +226,11 @@ struct GeneralTabView: View {
                     managementRow
                 }
 
+                if controller.deviceInfo?.supportsArtwork == true {
+                    Divider()
+                    artworkRow
+                }
+
                 // The iTunes sync radio only means something for an iPod that
                 // mirrors the library. A manually managed one has no selection
                 // for it to govern, so it goes rather than sitting inert.
@@ -303,6 +309,40 @@ struct GeneralTabView: View {
             Button(path == nil ? "Choose…" : "Change…", action: change)
         }
         .help(help)
+    }
+
+    /// Forces every album's cover to be sent again on the next sync.
+    ///
+    /// The app resends automatically when an iPod goes from unable to receive
+    /// artwork to able, but that only fires for a transition it *saw*. Anyone
+    /// who fixed their `SysInfo` by hand before installing this version — which
+    /// is what the workaround in issue #3 asks for — was already identified by
+    /// the time we first looked, so nothing looked like a transition and their
+    /// existing albums would stay bare with no way to say otherwise. Resetting
+    /// the iPod would work and costs hours of re-copying; this costs a database
+    /// edit, since libgpod renders thumbnails from covers already on disk.
+    private var artworkRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("Album art")
+                .frame(width: 110, alignment: .leading)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Button(artworkResendQueued ? "Will send on next sync" : "Send All Again") {
+                    Log.ui.info("user clicked Send All Album Art Again")
+                    ArtworkSync.resendEverything(to: profiles.active)
+                    artworkResendQueued = true
+                }
+                .disabled(artworkResendQueued || controller.status != .ready)
+
+                Text("Sends every album's cover to this iPod again, whether or not it already has one. No music is copied. Use this if artwork never arrived — after fixing the iPod's model by hand, say.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        // A different iPod has its own answer, so the button un-latches.
+        .onChange(of: profiles.active.key) { _, _ in artworkResendQueued = false }
     }
 
     // MARK: - Danger zone
