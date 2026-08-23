@@ -369,6 +369,11 @@ final class SyncEngine {
     ) async {
         Log.sync.info("execute started: +\(plan.toAddCount) -\(plan.toRemoveCount) convert=\(plan.pendingConversion.count)")
         cancelRequested = false
+        // Ask once, up front. Every artwork count below is reported against
+        // this: when libgpod won't write covers, handing it one is not the same
+        // as attaching one, and reporting otherwise is what sent #3 and #4
+        // looking in the wrong place for hours.
+        let artworkSupported = await device.deviceInfo()?.supportsArtwork ?? false
         phaseWeights = SyncPhaseWeights(plan: plan)
         var convertedFailures = 0
         var added = 0, removed = 0, addFailed = 0, removeFailed = 0
@@ -462,7 +467,7 @@ final class SyncEngine {
             try? FileManager.default.createDirectory(at: artworkScratchDir, withIntermediateDirectories: true)
             let locator = ArtworkLocator(scratchDir: artworkScratchDir)
 
-            var artworkAttached = 0
+            var artworkFound = 0
             var artworkMissing = 0
 
             for (i, planned) in validToAdd.enumerated() {
@@ -503,14 +508,19 @@ final class SyncEngine {
                         artworkPath: coverURL?.path
                     )
                     added += 1
-                    if coverURL != nil { artworkAttached += 1 }
+                    if coverURL != nil { artworkFound += 1 }
                 } catch {
                     Log.sync.warning("add failed: \(planned.library.artist) — \(planned.library.title): \(error.localizedDescription)")
                     addFailed += 1
                 }
             }
             state = .running(SyncProgress(phase: .adding, completed: added, total: validToAdd.count, phaseStartedAt: addStart))
-            Log.sync.info("phase: adding done (\(added) ok, \(addFailed) failed) — artwork: \(artworkAttached) attached, \(artworkMissing) missing")
+            if artworkSupported {
+                Log.sync.info("phase: adding done (\(added) ok, \(addFailed) failed) — artwork: \(artworkFound) attached, \(artworkMissing) missing")
+            } else {
+                Log.sync.info("phase: adding done (\(added) ok, \(addFailed) failed) — artwork: 0 written (\(artworkFound) cover(s) found but this iPod isn't identified, so libgpod writes none)")
+                Log.artwork.error("\(artworkFound) cover(s) were found and passed to libgpod, and none reached the iPod. Identify the iPod to fix this.")
+            }
         }
 
         if cancelRequested {
@@ -547,7 +557,11 @@ final class SyncEngine {
                 total: plan.artworkUpdates.count,
                 phaseStartedAt: artworkStart
             ))
-            Log.artwork.info("phase: artwork done (\(artworkUpdated) of \(plan.artworkUpdates.count) albums)")
+            if artworkSupported {
+                Log.artwork.info("phase: artwork done (\(artworkUpdated) of \(plan.artworkUpdates.count) albums)")
+            } else {
+                Log.artwork.error("phase: artwork done — 0 of \(plan.artworkUpdates.count) albums reached the iPod; it isn't identified, so libgpod writes no cover art")
+            }
         }
 
         if cancelRequested {

@@ -32,12 +32,36 @@ typedef struct {
 typedef struct {
     char *model_name;       /* e.g. "iPod Classic" */
     char *generation;       /* e.g. "Classic (3rd Gen.)" */
-    double capacity_gb;     /* Storage capacity in GB */
+    /* The model number libgpod matched, e.g. "A726". NULL when the device
+       could not be identified at all - which is the normal state for an iPod
+       restored by anything modern, because nothing since old iTunes writes
+       iPod_Control/Device/SysInfo. Callers should treat NULL as "ask the user
+       which iPod this is", not as an error. */
+    char *model_number;
+    double capacity_gb;     /* Storage capacity in GB (the model's stock size) */
     int track_count;        /* Number of tracks on device */
     int playlist_count;     /* Number of playlists */
+    /* 1 when libgpod will actually write cover art for this device.
+       This is the question that matters, and it is false for two unrelated
+       reasons: the model is unidentified (model_number == NULL, fixable with
+       ipod_write_sysinfo), or the model is identified but predates artwork
+       entirely - iPod 1G-4G, mini and shuffle (not fixable). Distinguish them
+       by model_number, and never report a sync as having written artwork
+       when this is 0. */
+    int supports_artwork;
     char *uuid;             /* Device UUID (may be NULL) */
     char *mountpoint;       /* Mount path */
 } IPodDeviceInfo;
+
+/* One row of libgpod's compiled-in model table, for letting a user identify an
+   iPod the app couldn't identify itself. */
+typedef struct {
+    char *model_number;     /* e.g. "A726" - what goes in SysInfo's ModelNumStr */
+    char *model_name;       /* e.g. "Nano (Red)" */
+    char *generation;       /* e.g. "Nano (2nd Gen.)" */
+    double capacity_gb;     /* Stock capacity; a re-drived iPod won't match it */
+    int supports_artwork;   /* 1 if choosing this model gets the user artwork */
+} IPodModelOption;
 
 /* Track information */
 typedef struct {
@@ -125,6 +149,60 @@ IPodDeviceInfo *ipod_get_device_info(IPodDB *db);
  * @param info  Device info to free
  */
 void ipod_free_device_info(IPodDeviceInfo *info);
+
+/**
+ * List every click-wheel iPod model libgpod knows about.
+ *
+ * iPhone, iPod touch and iPad entries are omitted - they are in libgpod's
+ * table but are not devices this app can sync.
+ *
+ * @param out_count  Receives the number of entries returned
+ * @return           Array of models (free with ipod_free_models()), or NULL
+ */
+IPodModelOption *ipod_list_models(int *out_count);
+
+/**
+ * Free an array returned by ipod_list_models().
+ */
+void ipod_free_models(IPodModelOption *models, int count);
+
+/**
+ * Derive a model number from an iPod's USB serial number.
+ *
+ * libgpod maps the last three characters of an Apple serial to a model. That
+ * only works for iPods whose USB serial *is* an Apple serial - a nano 3G or
+ * later, or a classic. Everything older reports its FireWire GUID instead
+ * (16 hex digits), and 27 of libgpod's serial keys are themselves pure hex
+ * ("726", "201", "5B7"), so feeding a GUID to that table returns a confidently
+ * wrong model. This function rejects 16-hex-digit input for that reason.
+ *
+ * @param serial  USB serial number string
+ * @return        Model number (free with ipod_free_string()), or NULL if the
+ *                serial is a FireWire GUID or maps to nothing
+ */
+char *ipod_model_number_from_serial(const char *serial);
+
+/**
+ * Write iPod_Control/Device/SysInfo so libgpod can identify the device.
+ *
+ * Takes a mountpoint rather than an open IPodDB on purpose: re-reading SysInfo
+ * on a device backing a live database invalidates that database's artwork and
+ * accessing it afterwards corrupts memory (see itdb_device_read_sysinfo).
+ * Close the database, call this, then reopen.
+ *
+ * Any existing SysInfo with content is copied to SysInfo.mypod-backup first,
+ * and keys already present are preserved.
+ *
+ * @param mountpoint      Path to the mounted iPod
+ * @param model_num_str   Model number, e.g. "A726" (written as "xA726" -
+ *                        libgpod strips one leading letter before matching)
+ * @param firewire_guid   16-hex-digit GUID, with or without a 0x prefix, or
+ *                        NULL to leave any existing value alone
+ * @return                Result with success status
+ */
+IPodResult ipod_write_sysinfo(const char *mountpoint,
+                              const char *model_num_str,
+                              const char *firewire_guid);
 
 /* ============================================================================
  * Track Listing

@@ -17,6 +17,7 @@ struct ContentView: View {
 
     @State private var showSyncSheet = false
     @State private var showManualSheet = false
+    @State private var showIdentifySheet = false
 
     // Computed, not stored: a stored `private` property would make the
     // memberwise init private too. Reading `.active` in `body` still registers
@@ -35,7 +36,8 @@ struct ContentView: View {
                 capacityBytes: controller.effectiveCapacityBytes,
                 hasNonStockDrive: controller.hasNonStockDrive,
                 profile: profileStore.active,
-                onEject: { controller.eject() }
+                onEject: { controller.eject() },
+                onIdentify: { showIdentifySheet = true }
             )
             MainTabView(
                 controller: controller,
@@ -103,6 +105,9 @@ struct ContentView: View {
         // the iPod should look and feel identical whichever mode produced it.
         .sheet(isPresented: $showManualSheet) {
             ManualSheetView(store: manualStore, onCommit: commitManualAdd)
+        }
+        .sheet(isPresented: $showIdentifySheet) {
+            IdentifySheet(controller: controller, capacityBytes: controller.effectiveCapacityBytes)
         }
         .sheet(isPresented: $updateChecker.isPresenting) {
             UpdateSheet(checker: updateChecker)

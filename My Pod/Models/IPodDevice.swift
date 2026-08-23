@@ -4,6 +4,7 @@ enum IPodError: LocalizedError {
     case openFailed(String)
     case saveFailed(String)
     case syncFailed(String)
+    case identifyFailed(String)
     case notOpen
 
     var errorDescription: String? {
@@ -11,6 +12,7 @@ enum IPodError: LocalizedError {
         case .openFailed(let m): return "Couldn't open iPod: \(m)"
         case .saveFailed(let m): return "Couldn't save iPod database: \(m)"
         case .syncFailed(let m): return "Sync failed: \(m)"
+        case .identifyFailed(let m): return "Couldn't identify iPod: \(m)"
         case .notOpen: return "iPod is not open."
         }
     }

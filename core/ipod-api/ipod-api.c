@@ -13,6 +13,7 @@
  * it statically carries the section 6 relink obligation described in LICENSE.
  */
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include "itdb.h"
+#include "itdb_device.h"
 #include "ipod-api.h"
 
 #define IPOD_API_VERSION "1.0.0"
@@ -54,6 +56,18 @@ static char *safe_strdup(const char *s)
 static char *glib_strdup(const gchar *s)
 {
     return s ? strdup(s) : NULL;
+}
+
+/* printf into a malloc()d string the caller frees with ipod_free_string() */
+static char *api_strdup_printf(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    gchar *g = g_strdup_vprintf(fmt, args);
+    va_end(args);
+    char *out = glib_strdup(g);
+    g_free(g);
+    return out;
 }
 
 /* Convert GError to string and free the error */
@@ -293,7 +307,22 @@ IPodDeviceInfo *ipod_get_device_info(IPodDB *db)
             info->model_name = glib_strdup(itdb_info_get_ipod_model_name_string(ipod_info->ipod_model));
             info->generation = glib_strdup(itdb_info_get_ipod_generation_string(ipod_info->ipod_generation));
             info->capacity_gb = ipod_info->capacity;
+            /* Only report a model number when the device was really
+               identified. itdb_device_get_ipod_info() never returns NULL: with
+               no SysInfo it hands back the table's "Invalid" row, and with an
+               unrecognised ModelNumStr the "Unknown" row. Both have a
+               model_number string, and passing either up as if it were real
+               is exactly how this failure stayed invisible. */
+            if (ipod_info->ipod_model != ITDB_IPOD_MODEL_INVALID &&
+                ipod_info->ipod_model != ITDB_IPOD_MODEL_UNKNOWN) {
+                info->model_number = glib_strdup(ipod_info->model_number);
+            }
         }
+
+        /* Ask libgpod directly rather than inferring from the model. This is
+           the same call itdb_write() consults before writing any artwork, so
+           it is the only honest answer to "will covers reach this iPod". */
+        info->supports_artwork = itdb_device_supports_artwork(device) ? 1 : 0;
 
         /* itdb_device_get_uuid returns a pointer into the device's
            sysinfo hash table - do NOT free it */
@@ -316,9 +345,262 @@ void ipod_free_device_info(IPodDeviceInfo *info)
 
     free(info->model_name);
     free(info->generation);
+    free(info->model_number);
     free(info->uuid);
     free(info->mountpoint);
     free(info);
+}
+
+/* ============================================================================
+ * Device Identification
+ *
+ * Nothing since old iTunes writes iPod_Control/Device/SysInfo, so a restore by
+ * Finder or by Windows leaves an iPod that libgpod cannot identify. It then
+ * declines to write cover art - it does not know what pixel sizes the device
+ * wants - and does so silently. These functions exist to let the app detect
+ * that, ask the user which iPod it is, and write the file.
+ * ============================================================================
+ */
+
+/* iPhone, iPod touch and iPad are in libgpod's table but are not click-wheel
+   iPods, so offering them in a "which iPod is this?" picker would be noise. */
+static int is_click_wheel_model(Itdb_IpodModel model)
+{
+    switch (model) {
+    case ITDB_IPOD_MODEL_INVALID:
+    case ITDB_IPOD_MODEL_UNKNOWN:
+    case ITDB_IPOD_MODEL_MOBILE_1:
+    case ITDB_IPOD_MODEL_IPHONE_1:
+    case ITDB_IPOD_MODEL_IPHONE_WHITE:
+    case ITDB_IPOD_MODEL_IPHONE_BLACK:
+    case ITDB_IPOD_MODEL_TOUCH_SILVER:
+    case ITDB_IPOD_MODEL_IPAD:
+        return 0;
+    default:
+        return 1;
+    }
+}
+
+IPodModelOption *ipod_list_models(int *out_count)
+{
+    if (out_count) *out_count = 0;
+
+    const Itdb_IpodInfo *table = itdb_info_get_ipod_info_table();
+    if (!table) return NULL;
+
+    int total = 0;
+    for (const Itdb_IpodInfo *it = table; it->model_number != NULL; it++) {
+        if (is_click_wheel_model(it->ipod_model)) total++;
+    }
+    if (total == 0) return NULL;
+
+    IPodModelOption *out = (IPodModelOption *)calloc((size_t)total, sizeof(IPodModelOption));
+    if (!out) return NULL;
+
+    /* One scratch device, reused. itdb_device_supports_artwork() only consults
+       the model resolved from sysinfo, so it answers correctly with no
+       mountpoint - and asking libgpod beats hard-coding a second copy of its
+       artwork-capability table here. */
+    Itdb_Device *probe = itdb_device_new();
+
+    int n = 0;
+    for (const Itdb_IpodInfo *it = table; it->model_number != NULL && n < total; it++) {
+        if (!is_click_wheel_model(it->ipod_model)) continue;
+        out[n].model_number = glib_strdup(it->model_number);
+        out[n].model_name = glib_strdup(itdb_info_get_ipod_model_name_string(it->ipod_model));
+        out[n].generation = glib_strdup(itdb_info_get_ipod_generation_string(it->ipod_generation));
+        out[n].capacity_gb = it->capacity;
+        if (probe) {
+            gchar *num = g_strdup_printf("x%s", it->model_number);
+            itdb_device_set_sysinfo(probe, "ModelNumStr", num);
+            g_free(num);
+            out[n].supports_artwork = itdb_device_supports_artwork(probe) ? 1 : 0;
+        }
+        n++;
+    }
+
+    if (probe) itdb_device_free(probe);
+
+    if (out_count) *out_count = n;
+    return out;
+}
+
+void ipod_free_models(IPodModelOption *models, int count)
+{
+    if (!models) return;
+    for (int i = 0; i < count; i++) {
+        free(models[i].model_number);
+        free(models[i].model_name);
+        free(models[i].generation);
+    }
+    free(models);
+}
+
+/* Does this look like a FireWire GUID rather than an Apple serial number? */
+static int looks_like_firewire_guid(const char *s)
+{
+    if (!s) return 0;
+    if (*s == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+    size_t len = strlen(s);
+    if (len != 16) return 0;
+    for (size_t i = 0; i < len; i++) {
+        if (!isxdigit((unsigned char)s[i])) return 0;
+    }
+    return 1;
+}
+
+char *ipod_model_number_from_serial(const char *serial)
+{
+    if (!serial) return NULL;
+
+    /* Guard, not optimisation: libgpod keys this table on the last three
+       characters of the serial, and 27 of its keys are pure hex ("726",
+       "201", "5B7"...). A FireWire GUID ending in any of them resolves to a
+       wrong model with no way to tell. */
+    if (looks_like_firewire_guid(serial)) return NULL;
+
+    const Itdb_IpodInfo *info = itdb_ipod_info_from_serial(serial);
+    if (!info) return NULL;
+    if (info->ipod_model == ITDB_IPOD_MODEL_INVALID ||
+        info->ipod_model == ITDB_IPOD_MODEL_UNKNOWN) {
+        return NULL;
+    }
+    return glib_strdup(info->model_number);
+}
+
+/* Look a model number up in libgpod's table, so we refuse to write a
+   ModelNumStr that would just resolve back to "Unknown". */
+static const Itdb_IpodInfo *find_model(const char *model_number)
+{
+    if (!model_number) return NULL;
+    for (const Itdb_IpodInfo *it = itdb_info_get_ipod_info_table();
+         it->model_number != NULL; it++) {
+        if (strcmp(it->model_number, model_number) == 0) return it;
+    }
+    return NULL;
+}
+
+/* Copy the existing SysInfo aside, if it has anything in it. Best effort: a
+   file we cannot read is not a reason to refuse to write a good one. */
+static void backup_sysinfo(const char *devicedir)
+{
+    gchar *src = g_build_filename(devicedir, "SysInfo", NULL);
+    FILE *in = fopen(src, "rb");
+    if (in) {
+        fseek(in, 0, SEEK_END);
+        long size = ftell(in);
+        rewind(in);
+        if (size > 0) {
+            gchar *dst = g_build_filename(devicedir, "SysInfo.mypod-backup", NULL);
+            FILE *out = fopen(dst, "wb");
+            if (out) {
+                char buf[4096];
+                size_t got;
+                while ((got = fread(buf, 1, sizeof(buf), in)) > 0) {
+                    fwrite(buf, 1, got, out);
+                }
+                fclose(out);
+            }
+            g_free(dst);
+        }
+        fclose(in);
+    }
+    g_free(src);
+}
+
+IPodResult ipod_write_sysinfo(const char *mountpoint,
+                              const char *model_num_str,
+                              const char *firewire_guid)
+{
+    IPodResult result = {0, NULL};
+
+    if (!mountpoint || !model_num_str) {
+        result.error = strdup("Missing mountpoint or model number");
+        return result;
+    }
+
+    if (!find_model(model_num_str)) {
+        /* Writing an unrecognised number would leave the iPod exactly as
+           unidentified as it is now, with a file suggesting otherwise. */
+        result.error = api_strdup_printf(
+            "\"%s\" is not a model number libgpod recognises", model_num_str);
+        return result;
+    }
+
+    /* Normalise the GUID up front so a malformed one fails before anything is
+       written, rather than landing in SysInfo where it would quietly become a
+       bogus device identity. */
+    gchar *guid_value = NULL;
+    if (firewire_guid && *firewire_guid) {
+        const char *hex = firewire_guid;
+        if (hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X')) hex += 2;
+        if (!looks_like_firewire_guid(hex)) {
+            result.error = strdup("FireWire GUID must be 16 hexadecimal digits");
+            return result;
+        }
+        guid_value = g_ascii_strup(hex, -1);
+    }
+
+    gchar *devicedir = itdb_get_device_dir(mountpoint);
+    if (!devicedir) {
+        /* No Device directory yet - normal on a freshly restored iPod.
+           itdb_device_write_sysinfo() creates no directories of its own. */
+        gchar *controldir = itdb_get_control_dir(mountpoint);
+        if (!controldir) {
+            g_free(guid_value);
+            result.error = api_strdup_printf(
+                "No iPod_Control directory at %s - is this an iPod?", mountpoint);
+            return result;
+        }
+        devicedir = g_build_filename(controldir, "Device", NULL);
+        g_free(controldir);
+        if (g_mkdir_with_parents(devicedir, 0777) != 0) {
+            g_free(guid_value);
+            g_free(devicedir);
+            result.error = strdup("Could not create iPod_Control/Device");
+            return result;
+        }
+    }
+
+    backup_sysinfo(devicedir);
+    g_free(devicedir);
+
+    /* A standalone device, deliberately not the one behind an open database:
+       setting the mountpoint re-reads SysInfo, and doing that to a live
+       Itdb_iTunesDB invalidates its artwork and corrupts memory on next
+       access. Reading here also preserves any keys already in the file. */
+    Itdb_Device *device = itdb_device_new();
+    if (!device) {
+        g_free(guid_value);
+        result.error = strdup("Out of memory");
+        return result;
+    }
+    itdb_device_set_mountpoint(device, mountpoint);
+
+    /* libgpod strips one leading letter before matching, so "xA726" and
+       "MA726" both resolve to A726. It does not strip a trailing region code,
+       which is why Apple's own "MA726LL" would not match. */
+    gchar *model_value = g_strdup_printf("x%s", model_num_str);
+    itdb_device_set_sysinfo(device, "ModelNumStr", model_value);
+    g_free(model_value);
+
+    if (guid_value) {
+        gchar *prefixed = g_strdup_printf("0x%s", guid_value);
+        itdb_device_set_sysinfo(device, "FirewireGuid", prefixed);
+        g_free(prefixed);
+    }
+    g_free(guid_value);
+
+    GError *gerror = NULL;
+    if (itdb_device_write_sysinfo(device, &gerror)) {
+        result.success = 1;
+    } else {
+        result.error = gerror ? error_to_string(gerror)
+                              : strdup("Could not write SysInfo");
+    }
+
+    itdb_device_free(device);
+    return result;
 }
 
 /* ============================================================================

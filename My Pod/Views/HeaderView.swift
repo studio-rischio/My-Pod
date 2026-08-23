@@ -11,8 +11,22 @@ struct HeaderView: View {
     /// Whose settings and selection the tabs below are editing.
     let profile: DeviceProfile
     let onEject: () -> Void
+    let onIdentify: () -> Void
 
     var body: some View {
+        VStack(spacing: 0) {
+            summaryRow
+            if info?.needsIdentification == true {
+                identifyBanner
+            }
+        }
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    private var summaryRow: some View {
         HStack(alignment: .center, spacing: 16) {
             Image(systemName: "ipod")
                 .resizable()
@@ -43,10 +57,33 @@ struct HeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.regularMaterial)
-        .overlay(alignment: .bottom) {
-            Divider()
+    }
+
+    /// Shown when libgpod can't tell what iPod this is.
+    ///
+    /// Worth a banner rather than a line in the log because the consequence is
+    /// invisible: the sync reports success, the covers are right there in the
+    /// library, and none of them reach the device. Nothing else in the app
+    /// would ever tell the user why.
+    private var identifyBanner: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This iPod isn't identified, so album art won't sync")
+                    .fontWeight(.medium)
+                Text("Restoring an iPod no longer writes the file that says which model it is. Tell My Pod which iPod this is and it will write it for you.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Button("Identify iPod…", action: onIdentify)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12))
     }
 
     private var primaryLine: String {

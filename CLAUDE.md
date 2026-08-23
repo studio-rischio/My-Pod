@@ -195,6 +195,48 @@ identity tier keeps its selection. `MusicLibraryStore.activate` must **not** int
 selection against the scanned library — an iPod can connect before the first scan lands, and
 intersecting against an empty library silently deletes and then persists an empty selection.
 
+### Device identification
+
+Nothing since old iTunes writes `iPod_Control/Device/SysInfo`. Finder inherited iPod syncing but not
+that behaviour, and Windows restores don't do it either, so a restored iPod arrives with the file
+empty or absent — and restoring *again* cannot fix it. libgpod then resolves `ModelNumStr` to NULL,
+falls back to `ipod_info_table[0]` (named, literally, `"Invalid"`), finds no artwork capabilities for
+that row, and **writes no cover art at all** — without failing and without saying anything. Two
+users hit this on different generations restored on different platforms (issues #3, #4); it is the
+normal state of the refurbished market, not an edge case.
+
+`DeviceIdentification` + `IdentifySheet` close it: pick the model, write the file, reopen. Four
+things about that are load-bearing.
+
+- **`supports_artwork` is the question, not "is the model Invalid".** `DeviceInfo.supportsArtwork`
+  comes straight from `itdb_device_supports_artwork`, the same call `itdb_write` consults. It is
+  false for two unrelated reasons — unidentified (fixable) and a model that predates cover art
+  entirely, iPod 1G–4G, mini and shuffle (not fixable) — and the app must tell them apart, because
+  offering to write `SysInfo` to a 4th-gen owner promises artwork that will never appear. `HeaderView`
+  banners only the first; `IPodController` logs all three states on connect.
+- **Never report artwork the device didn't get.** `SyncEngine` counts covers *found*, and reports
+  them as attached only when `artworkSupported`. The old line said `artwork: 13 attached` on a device
+  that wrote zero, which is what sent #3 looking in the wrong place for hours.
+- **The serial→model shortcut must reject FireWire GUIDs.** libgpod's `itdb_ipod_info_from_serial`
+  keys on the **last three characters** of an Apple serial, and 27 of its keys are pure hex (`726`,
+  `201`, `5B7`…). Older iPods — everything up to the nano 2G / 5G video, i.e. exactly the ones this
+  feature exists for — report a 16-hex-digit FireWire GUID as their USB serial, so feeding one to
+  that table returns a *confidently wrong* model. `ipod_model_number_from_serial` refuses 16-hex
+  input for that reason. The GUID is still worth reading: it goes into `SysInfo`'s `FirewireGuid`,
+  which is the strongest tier of device identity (see "Per-device profiles"), and the profile absorbs
+  it via `formUnion` rather than spawning a second one.
+- **`SysInfo` is written with the database closed.** `itdb_device_read_sysinfo` invalidates the
+  artwork of any `Itdb_iTunesDB` built on the old identity, and touching it afterwards corrupts
+  memory. `ipod_write_sysinfo` therefore takes a *mountpoint*, not an `IPodDB*`, and builds its own
+  throwaway `Itdb_Device`; `IPodController.withDeviceClosed` is the close-act-reopen shape both this
+  and `fullReset` need. Existing keys survive (the throwaway device reads the file first), and any
+  non-empty previous file is copied to `SysInfo.mypod-backup`.
+
+`ModelNumStr` is written as `x` + the model number. libgpod strips one leading letter before
+matching, which is why `xA726` and `MA726` both resolve but Apple's own `MA726LL` does not — it does
+not strip the trailing region code. `ipod_write_sysinfo` refuses a model number that isn't in
+libgpod's table, since writing one would leave the iPod exactly as unidentified while looking fixed.
+
 ### Concurrency model
 
 The project sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so **every type is main-actor-isolated

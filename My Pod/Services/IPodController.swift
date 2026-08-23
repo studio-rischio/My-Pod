@@ -150,6 +150,17 @@ final class IPodController {
         self.status = .ready
         if let info {
             Log.device.info("iPod ready: \(info.displayName) (\(info.modelName)), \(info.trackCount) tracks, \(info.playlistCount) playlists")
+            // State the artwork verdict on every connect, not just when it's
+            // bad. Silence here is what made #3 and #4 take hours to find: a
+            // sync reported success, the covers were on disk, and nothing ever
+            // said libgpod had declined to write them.
+            if info.supportsArtwork {
+                Log.device.debug("artwork: supported by \(info.modelName)")
+            } else if info.isIdentified {
+                Log.device.info("artwork: \(info.modelName) (\(info.generation)) predates cover art — none will be written")
+            } else {
+                Log.device.error("artwork: this iPod is unidentified (no SysInfo), so libgpod will write no cover art. Use Identify iPod… to fix it.")
+            }
         }
     }
 
@@ -207,14 +218,48 @@ final class IPodController {
         }
     }
 
+    // MARK: - Identification
+
+    /// What we can work out about an unidentified iPod on our own, for
+    /// preselecting the picker. Recomputed each time the sheet opens rather
+    /// than cached — it reads IOKit, which is cheap, and a stale answer here
+    /// would be worse than no answer.
+    func identificationFindings(models: [IPodModel]) -> DeviceIdentification.Findings {
+        guard let url = watcher.connectedIPod else { return .none }
+        return DeviceIdentification.inspect(mountpoint: url, models: models)
+    }
+
+    /// Write `SysInfo` for `model`, then reopen the device so every downstream
+    /// consumer sees the new identity.
+    ///
+    /// Reuses `runReset`'s teardown-then-reload shape deliberately: writing
+    /// `SysInfo` under a live database invalidates its artwork, so the database
+    /// has to be closed first and reopened after — exactly what a reset does.
+    func identify(as model: IPodModel, firewireGUID: String?) {
+        Log.device.info("user requested: identify iPod as \(model.modelName) \(model.generation) (\(model.modelNumber))")
+        withDeviceClosed(label: "identify") { url in
+            try DeviceIdentification.write(
+                mountpoint: url,
+                modelNumber: model.modelNumber,
+                firewireGUID: firewireGUID
+            )
+        }
+    }
+
     func fullReset() {
         Log.device.info("user requested: reset iPod (wipe music + artwork + database)")
-        runReset(label: "Resetting iPod…") { url in
+        withDeviceClosed(label: "reset") { url in
             try IPodReset.fullReset(at: url)
         }
     }
 
-    private func runReset(label: String, op: @escaping @Sendable (URL) throws -> Void) {
+    /// Close the database, run `op` against the volume, then reopen.
+    ///
+    /// Both callers need that shape for the same reason: they change something
+    /// under libgpod's feet. A reset deletes the database files; identification
+    /// rewrites `SysInfo`, which invalidates the artwork of any database built
+    /// on the old identity. `label` appears in the log line for whichever ran.
+    private func withDeviceClosed(label: String, op: @escaping @Sendable (URL) throws -> Void) {
         guard let url = watcher.connectedIPod else { return }
         let oldDevice = device
         device = nil
@@ -224,8 +269,7 @@ final class IPodController {
         status = .opening
         Task { [weak self] in
             await oldDevice?.close()
-            // The C reset calls do file I/O on the iPod volume — push them off
-            // main actor.
+            // These do file I/O on the iPod volume — push them off main actor.
             let outcome: Result<Void, Error> = await Task.detached {
                 do { try op(url); return .success(()) }
                 catch { return .failure(error) }
@@ -234,10 +278,10 @@ final class IPodController {
                 guard let self else { return }
                 switch outcome {
                 case .success:
-                    Log.device.info("reset succeeded; reopening iPod")
+                    Log.device.info("\(label) succeeded; reopening iPod")
                     self.load(url: url)
                 case .failure(let error):
-                    Log.device.error("reset failed: \(error.localizedDescription)")
+                    Log.device.error("\(label) failed: \(error.localizedDescription)")
                     self.status = .error(error.localizedDescription)
                 }
             }
