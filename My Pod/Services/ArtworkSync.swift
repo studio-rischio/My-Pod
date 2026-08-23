@@ -70,6 +70,21 @@ enum ArtworkSync {
         Log.artwork.info("artwork baseline set for \"\(profile.displayName)\"")
     }
 
+    /// Send every album's cover again on the next sync.
+    ///
+    /// The one caller is a device that has just gone from unable to receive
+    /// artwork to able — the user identified it. `establishBaseline`'s reasoning
+    /// inverts there: an iPod libgpod couldn't name has been restored by
+    /// something modern and holds no art at all, and every track already on it
+    /// was added while libgpod was silently dropping covers. Left alone, the
+    /// sync diff calls those tracks `unchanged` forever and the artwork never
+    /// arrives, so identifying the iPod would fix the *next* album and nothing
+    /// the user already synced.
+    static func resendEverything(to profile: DeviceProfile) {
+        defaults.set(Date.distantPast, forKey: baselineKey(profile))
+        Log.artwork.info("\"\(profile.displayName)\" can take artwork now — every album's cover will be sent on the next sync")
+    }
+
     static func markSynced(_ profile: DeviceProfile, at date: Date = Date()) {
         defaults.set(date, forKey: baselineKey(profile))
         Log.artwork.debug("artwork baseline for \"\(profile.displayName)\" moved to \(date)")

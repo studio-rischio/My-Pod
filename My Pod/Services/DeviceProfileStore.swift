@@ -88,7 +88,31 @@ final class DeviceProfileStore {
         // first sync after upgrading would re-push artwork for the whole
         // library.
         ArtworkSync.establishBaseline(for: profile)
+        reconcileArtworkCapability(profile, supportsArtwork: info.supportsArtwork)
         save()
+    }
+
+    /// Notice when an iPod gains the ability to receive artwork, and make the
+    /// next sync resend it all.
+    ///
+    /// Tracked per profile because the transition is invisible otherwise: a
+    /// device the app couldn't identify took no covers at all, and everything
+    /// synced to it in that state is `unchanged` as far as the sync diff is
+    /// concerned. Identifying it has to reach backwards or the fix only helps
+    /// music the user hasn't synced yet.
+    ///
+    /// Three states, not two, and the difference is load-bearing. **Unset**
+    /// means a profile written before this existed — record what we see and
+    /// change nothing, because assuming "was incapable" would re-push the whole
+    /// library on the first launch after upgrading, for every user. Only a
+    /// recorded `false` turning into `true` is a real transition.
+    private func reconcileArtworkCapability(_ profile: DeviceProfile, supportsArtwork: Bool) {
+        let key = profile.storageKey("artworkCapable")
+        let previous = defaults.object(forKey: key) as? Bool
+        if supportsArtwork, previous == false {
+            ArtworkSync.resendEverything(to: profile)
+        }
+        defaults.set(supportsArtwork, forKey: key)
     }
 
     /// Copy the default profile's selection into a brand-new device profile.
