@@ -329,7 +329,7 @@ struct GeneralTabView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Button(artworkResendQueued ? "Will send on next sync" : "Send All Again") {
                     Log.ui.info("user clicked Send All Album Art Again")
-                    ArtworkSync.resendEverything(to: profiles.active)
+                    ArtworkSync.resendEverything(to: profiles.active, reason: "requested by hand")
                     artworkResendQueued = true
                 }
                 .disabled(artworkResendQueued || controller.status != .ready)

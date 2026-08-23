@@ -110,7 +110,7 @@ final class DeviceProfileStore {
         let key = profile.storageKey("artworkCapable")
         let previous = defaults.object(forKey: key) as? Bool
         if supportsArtwork, previous == false {
-            ArtworkSync.resendEverything(to: profile)
+            ArtworkSync.resendEverything(to: profile, reason: "this iPod could not take artwork before and can now")
         }
         defaults.set(supportsArtwork, forKey: key)
     }

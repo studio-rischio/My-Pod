@@ -80,9 +80,14 @@ enum ArtworkSync {
     /// sync diff calls those tracks `unchanged` forever and the artwork never
     /// arrives, so identifying the iPod would fix the *next* album and nothing
     /// the user already synced.
-    static func resendEverything(to profile: DeviceProfile) {
+    /// `reason` is required rather than defaulted because the two callers reach
+    /// here for genuinely different reasons — a device that just became able to
+    /// take artwork, and a user who pressed the button — and a line that states
+    /// the wrong one is the same kind of misreporting this whole area exists to
+    /// stop.
+    static func resendEverything(to profile: DeviceProfile, reason: String) {
         defaults.set(Date.distantPast, forKey: baselineKey(profile))
-        Log.artwork.info("\"\(profile.displayName)\" can take artwork now — every album's cover will be sent on the next sync")
+        Log.artwork.info("every album's cover will be sent to \"\(profile.displayName)\" on the next sync — \(reason)")
     }
 
     static func markSynced(_ profile: DeviceProfile, at date: Date = Date()) {
