@@ -4,7 +4,7 @@ A native macOS app for syncing music to classic iPods, built on [libgpod](https:
 
 Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI interface on top of libgpod so a click-wheel iPod can still be kept in sync with a music library on disk — including transcoding formats the iPod can't play, writing cover art, and syncing playlists.
 
-![The General tab, showing device details and the storage bar](docs/screenshots/01-general-tab.webp)
+![The General tab, showing the connected iPod's details, library folders, management mode, quality ceiling and the storage bar](docs/screenshots/01-general-tab.webp)
 
 ## Features
 
@@ -27,13 +27,21 @@ Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI in
 
 The Music tab is the library. Checkboxes drive what syncs; the dot marks what isn't on the iPod yet.
 
-![The Music tab, showing the library tree with new-music dots and the sync selection panel](docs/screenshots/02-music-library.webp)
+![The Music tab, showing the library tree with checkboxes and the selection panel reporting cover art, sizes on disk and on the iPod, and conversion status](docs/screenshots/02-music-library.webp)
+
+### Filling in missing cover art
+
+**Album Art** covers an album three ways: search Apple Music and the Cover Art Archive, drop in a
+file of your own, or lift a picture back out of the audio files. Nothing is sent until you press
+Search, and only the words in the two boxes go.
+
+![The Album Art sheet, searching for an album cover by artist and album name and showing the result found on Apple Music](docs/screenshots/09-album-art.webp)
 
 ### Reviewing a sync before it runs
 
 Nothing is written until you confirm. The plan shows exactly what will be added, removed, left alone, and transcoded.
 
-![The sync plan sheet, listing tracks to add, remove, leave unchanged, and convert](docs/screenshots/03-sync-plan.webp)
+![The sync plan sheet, listing tracks to add, remove, leave unchanged and convert, and the playlists that will be created](docs/screenshots/03-sync-plan.webp)
 
 ### Running the sync
 
@@ -53,7 +61,7 @@ Read from a folder of plain `.m3u` files (`~/Music/MyPodPlaylists/` unless you p
 
 Playlists are authored outside My Pod for now: build them in Finder, a text editor, or any music app that writes `.m3u`, then hit Refresh. An in-app editor will come back once it can pull tracks across from the library.
 
-![The Playlists tab, showing a playlist and its tracks](docs/screenshots/08-playlists.webp)
+![The Playlists tab, showing three .m3u playlists with checkboxes and dots marking the two not yet on the iPod](docs/screenshots/08-playlists.webp)
 
 ## Download
 

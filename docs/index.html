@@ -46,7 +46,7 @@
     --prose: 62ch;
   }
 
-  /* Dark only, deliberately. The app runs dark, all eight screenshots are dark,
+  /* Dark only, deliberately. The app runs dark, all nine screenshots are dark,
      and the icon's ground is navy — so the page commits to that world rather
      than making the screenshots float on paper. The hero icon carries its own
      tile and would survive a light ground, so this is a design choice, not a
@@ -166,11 +166,16 @@
   }
 
   .app-icon {
-    /* ÷0.80469 because the rendered icon is only 80.5% tile: macOS surrounds it
-       with transparent margin and a drop shadow, so an uncorrected height would
-       draw a visibly smaller tile than the number asks for. The clamp is the
-       tile size you actually want to see. */
-    height: calc(clamp(6.5rem, 13vw, 8.5rem) / 0.80469);
+    /* No correction factor: this export is full-bleed, the rounded tile filling
+       the whole canvas to the edges with only the corners transparent. So the
+       height asked for is the tile drawn, and the clamp says it directly.
+       The previous export was a macOS-style icon — 79.7% tile inside a
+       transparent margin with a drop shadow baked in — and needed dividing by
+       0.80469 to undo that. Re-export from Icon Composer and check which shape
+       you have before trusting this rule: with the old asset the clamp drew a
+       tile a fifth too small, and with a bare tile the divisor draws it a
+       quarter too big. */
+    height: clamp(6.5rem, 13vw, 8.5rem);
     width: auto;
     flex: none;
   }
@@ -267,10 +272,12 @@
 
   /* ---- Hero pair ------------------------------------------------------
      Library on the Mac beside the result on the device — a before and after.
-     The two images have very different aspects (screenshot 1.318, photo 0.793),
-     so each one's flex-grow is set to its own aspect ratio. Widths then land in
+     The two images have different aspects (screenshot 1.053, photo 1.000), so
+     each one's flex-grow is set to its own aspect ratio. Widths then land in
      that same proportion, and because height = width ÷ aspect, both render to
-     an identical height without a single pixel value being hard-coded. */
+     an identical height without a single pixel value being hard-coded. The
+     names say which image, not which shape — the two have already swapped
+     which is the wider once, and re-cropping either will do it again. */
   .pair {
     display: flex;
     align-items: flex-start;
@@ -278,8 +285,8 @@
     margin-top: clamp(2rem, 5vw, 3rem);
   }
   .pair figure { min-width: 0; }
-  .pair-wide { flex: 1318 1 0; }   /* 2264 ÷ 1718 */
-  .pair-tall { flex:  793 1 0; }   /* 1946 ÷ 2455 */
+  .pair-app   { flex: 1053 1 0; }   /* 1400 ÷ 1330 */
+  .pair-photo { flex: 1000 1 0; }   /* 1300 ÷ 1300 */
 
   .pair img {
     width: 100%;
@@ -300,11 +307,10 @@
     margin-top: .85rem;
   }
 
-  /* Stacked below the breakpoint, with the photo reined in — at full width its
-     portrait aspect would run taller than the screen it sits under. */
+  /* Stacked below the breakpoint. Both images are landscape, so neither runs
+     away vertically at full width and neither needs reining in. */
   @media (max-width: 46rem) {
     .pair { flex-direction: column; align-items: stretch; }
-    .pair-tall { max-width: 17rem; }
   }
 
   /* ---- Features ------------------------------------------------------- */
@@ -473,7 +479,7 @@
 
 <header class="hero wrap">
   <div class="hero-head">
-    <img class="app-icon" src="app-icon.png" width="256" height="256"
+    <img class="app-icon" src="app-icon.png" width="1024" height="1024"
          alt="The My Pod app icon: a white click-wheel iPod on a navy tile, with gold stars and blue music notes above it.">
     <h1>My&nbsp;Pod</h1>
   </div>
@@ -519,17 +525,17 @@
   </p>
 
   <div class="pair">
-    <figure class="pair-wide">
-      <img src="screenshots/02-music-library.webp" width="1400" height="1062"
-           alt="The Music tab: a scrollable list of artists with checkboxes, a dot marking artists not yet on the iPod, and a side panel showing sync selection, new music, and conversion status."
+    <figure class="pair-app">
+      <img src="screenshots/02-music-library.webp" width="1400" height="1330"
+           alt="The Music tab: a scrollable list of artists with checkboxes, and a side panel showing the selected artist's cover art, sizes on disk and on the iPod, conversion status, and how much of it is already on the device."
            fetchpriority="high" decoding="async">
       <figcaption>Your modern music library</figcaption>
     </figure>
-    <figure class="pair-tall">
-      <img src="screenshots/photo.webp" width="900" height="1135"
-           alt="A black iPod with a red click wheel on a wooden desk beside coiled white earphones, its screen showing Now Playing: Espresso by Sabrina Carpenter, from Short n' Sweet, with the album cover displayed."
+    <figure class="pair-photo">
+      <img src="screenshots/photo.webp" width="1300" height="1300"
+           alt="Three iPods on a wooden desk around a coil of white earphones — a red nano, a white classic, and a black one with a red click wheel — each showing a Now Playing screen, the black one with album art."
            fetchpriority="high" decoding="async">
-      <figcaption>Your retro music player</figcaption>
+      <figcaption>Your retro music players</figcaption>
     </figure>
   </div>
 </header>
@@ -600,8 +606,8 @@
           <p>What gets added, removed, left alone, and transcoded.</p>
         </div>
       </div>
-      <img class="shot" src="screenshots/03-sync-plan.webp" width="1200" height="910" loading="lazy" decoding="async"
-           alt="The sync plan sheet listing 43 tracks to add, 1 to remove, 2,839 unchanged and 43 needing conversion, with the track to be removed named underneath.">
+      <img class="shot" src="screenshots/03-sync-plan.webp" width="1200" height="1140" loading="lazy" decoding="async"
+           alt="The sync plan sheet: nothing to add, remove or convert, 3,316 tracks unchanged, and two new playlists to be created, each with its track count.">
     </li>
     <li>
       <div class="step-head">
@@ -646,6 +652,27 @@
 </section>
 
 <section class="wrap">
+  <p class="eyebrow">Cover art</p>
+  <h2 class="section-title">A cover for every album, from wherever it lives</h2>
+  <p class="lede">
+    Artwork is found per album and written into the iPod&rsquo;s database as
+    properly rendered thumbnails. Albums missing one are flagged, and
+    <strong>Album&nbsp;Art</strong> fills the gap three ways: search Apple Music
+    and the Cover Art Archive, drop in a file of your own, or lift the picture
+    back out of the audio files. Whatever you pick is squared &mdash; crop or
+    fit, your choice &mdash; and saved as <code>cover.jpg</code> beside the
+    music, where everything else can see it too. Nothing is sent until you press
+    Search, and only the words in the two boxes go.
+  </p>
+
+  <figure class="figure-lead">
+    <img class="shot" src="screenshots/09-album-art.webp" width="1400" height="1330" loading="lazy" decoding="async"
+         alt="The Album Art sheet over the Music tab, searching by artist and album for Norm by Andy Shauf, with one result found on Apple Music at 1200 by 1200 pixels, and File and In the Files tabs alongside Search.">
+    <figcaption>Search, a file of your own, or whatever is already inside the audio.</figcaption>
+  </figure>
+</section>
+
+<section class="wrap">
   <p class="eyebrow">Playlists</p>
   <h2 class="section-title">Ordinary files, not a database</h2>
   <p class="lede">
@@ -657,8 +684,8 @@
   </p>
 
   <figure class="figure-lead">
-    <img class="shot" src="screenshots/08-playlists.webp" width="1856" height="1408" loading="lazy" decoding="async"
-         alt="The Playlists tab: a list of playlists on the left, and the selected playlist's 13 tracks on the right with title, artist and album for each.">
+    <img class="shot" src="screenshots/08-playlists.webp" width="1856" height="1762" loading="lazy" decoding="async"
+         alt="The Playlists tab: three .m3u playlists with checkboxes and track counts, two of them marked with a dot as not yet on the iPod.">
   </figure>
 </section>
 
@@ -668,12 +695,15 @@
   <p class="lede">
     Model, generation, capacity, and where it&rsquo;s mounted. On an iPod whose
     original drive has been swapped for a CF card or SSD, the installed capacity
-    and the model&rsquo;s stock size are both shown, because they disagree.
+    and the model&rsquo;s stock size are both shown, because they disagree. The
+    rest of the tab is this iPod&rsquo;s own: which folders it draws from,
+    whether it mirrors the library or is managed by hand, and the quality
+    ceiling everything is converted down to.
   </p>
 
   <figure class="figure-lead">
-    <img class="shot" src="screenshots/01-general-tab.webp" width="1856" height="1408" loading="lazy" decoding="async"
-         alt="The General tab, listing device name, model, generation, installed capacity of 255.84 GB alongside a 20 GB stock capacity, track and playlist counts and mount point, with a storage bar along the bottom.">
+    <img class="shot" src="screenshots/01-general-tab.webp" width="1856" height="1762" loading="lazy" decoding="async"
+         alt="The General tab, listing the iPod's model and generation, an installed capacity of 256 GB alongside a 20 GB stock capacity, track and playlist counts, its mount point, the library folders, whether it mirrors the library or is managed by hand, and its Apple Lossless quality ceiling, with a storage bar along the bottom.">
   </figure>
 </section>
 
